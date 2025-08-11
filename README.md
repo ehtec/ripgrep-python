@@ -15,6 +15,7 @@ This library provides a true native integration with ripgrep's Rust API, not jus
 - **Context support** (before/after lines)
 - **Pythonic API** with full type hints and IDE support
 - **Type-safe** with complete `.pyi` stub files for static analysis
+- [ ] TODO: integrate https://github.com/phiresky/ripgrep-all
 
 ## Installation
 

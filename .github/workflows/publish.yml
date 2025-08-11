@@ -180,4 +180,4 @@ jobs:
       - name: Test installation from PyPI
         run: |
           pip install ripgrep-python
-          python -c "import pyripgrep; print('✅ Installation successful!')"
+          python -c "import pyripgrep; print('Installation successful!')"

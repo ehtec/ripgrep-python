@@ -1,0 +1,54 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ripgrep-python"
+version = "0.1.0"
+description = "A Python native binding for ripgrep"
+authors = [
+    { name = "LinXueyuanStdio", email = "23211526+LinXueyuanStdio@users.noreply.github.com" }
+]
+requires-python = ">=3.8"
+readme = "README.md"
+license = { file = "LICENSE" }
+keywords = ["ripgrep", "search", "grep", "rust", "regex", "text-search"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Text Processing :: General",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/LinXueyuanStdio/ripgrep-python"
+Repository = "https://github.com/LinXueyuanStdio/ripgrep-python"
+Issues = "https://github.com/LinXueyuanStdio/ripgrep-python/issues"
+
+[tool.maturin]
+# Include type stubs in the package
+include = ["pyripgrep.pyi", "py.typed"]
+
+# Python typing configuration
+[tool.setuptools]
+package-data = {"pyripgrep" = ["py.typed", "*.pyi"]}
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pyright]
+include = ["examples", "tests"]
+pythonVersion = "3.8"
+typeCheckingMode = "basic"

@@ -1,0 +1,23 @@
+[package]
+name = "ripgrep-python"
+version = "0.1.0"
+edition = "2021"
+description = "A Python native binding for ripgrep, a fast recursive search tool."
+repository = "https://github.com/LinXueyuanStdio/ripgrep-python"
+license = "MIT"
+authors = ["LinXueyuanStdio <23211526+LinXueyuanStdio@users.noreply.github.com>"]
+readme = "README.md"
+
+[lib]
+name = "pyripgrep"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }
+ignore = "0.4"
+regex = "1.10"
+thiserror = "1.0"
+log = "0.4"
+grep-searcher = "0.1"
+grep-matcher = "0.1"
+grep-regex = "0.1"

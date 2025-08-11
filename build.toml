@@ -1,0 +1,44 @@
+# Build configuration for ripgrep-python
+
+# Supported platforms for cross-compilation
+[platforms]
+linux = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "i686-unknown-linux-gnu",
+    "armv7-unknown-linux-gnueabihf",
+    "s390x-unknown-linux-gnu",
+    "powerpc64le-unknown-linux-gnu"
+]
+windows = [
+    "x86_64-pc-windows-msvc",
+    "i686-pc-windows-msvc"
+]
+macos = [
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin"
+]
+
+# Python versions to target
+[python]
+min_version = "3.8"
+supported_versions = ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+# Build settings
+[build]
+output_dir = "dist"
+cleanup_on_success = true
+parallel_builds = true
+
+# Publishing settings
+[publish]
+test_repository = "testpypi"
+prod_repository = "pypi"
+skip_existing = true
+non_interactive = true
+
+# Testing settings
+[test]
+smoke_test = true
+import_test = true
+functionality_test = true

@@ -1,0 +1,183 @@
+name: Build and Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"  # Trigger on version tags like v1.0.0
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      publish_target:
+        description: 'Publish target'
+        required: true
+        default: 'testpypi'
+        type: choice
+        options:
+          - 'testpypi'
+          - 'pypi'
+          - 'both'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # Linux builds (including musl)
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          sccache: 'true'
+          manylinux: auto
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist
+
+  # Windows builds
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        target: [x64, x86]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: ${{ matrix.target }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-${{ matrix.target }}
+          path: dist
+
+  # macOS builds (Intel and Apple Silicon)
+  macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: dist
+
+  # Source distribution
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: dist
+  # Release job - publishes to PyPI
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [linux, windows, macos, sdist]
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      # Determine publish target
+      - name: Determine publish target
+        id: target
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "target=${{ github.event.inputs.publish_target }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" =~ v.*-(rc|beta|alpha) ]]; then
+            echo "target=testpypi" >> $GITHUB_OUTPUT
+          else
+            echo "target=pypi" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to TestPyPI
+        if: steps.target.outputs.target == 'testpypi' || steps.target.outputs.target == 'both'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: upload
+          args: --non-interactive --skip-existing dist/*
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
+
+      - name: Publish to PyPI
+        if: steps.target.outputs.target == 'pypi' || steps.target.outputs.target == 'both'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: upload
+          args: --non-interactive --skip-existing dist/*
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+  # Test installation job
+  test-install:
+    name: Test Installation
+    needs: [release]
+    if: always() && needs.release.result == 'success'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Wait for PyPI propagation
+        run: sleep 60
+
+      - name: Test installation from PyPI
+        run: |
+          pip install ripgrep-python
+          python -c "import pyripgrep; print('✅ Installation successful!')"

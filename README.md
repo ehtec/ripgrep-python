@@ -433,7 +433,7 @@ results = grep.search("pattern", head_limit=1000)
 
 ## License
 
-MIT License - see LICENSE file for details
+[Apache-2.0 License](https://github.com/LinXueyuanStdio/ripgrep-python?tab=Apache-2.0-1-ov-file) - see LICENSE file for details
 
 ## Acknowledgments
 

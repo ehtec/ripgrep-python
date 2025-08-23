@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use ignore::WalkBuilder;
 use grep_searcher::{Searcher, sinks};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
+use grep_matcher::Matcher;
 use std::fs::File;
 use globset::Glob;
 

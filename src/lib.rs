@@ -7,7 +7,7 @@ use ignore::WalkBuilder;
 use grep_searcher::{Searcher, sinks};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use std::fs::File;
-use globset::{Glob, GlobBuilder};
+use globset::Glob;
 
 /// Output modes for search results
 #[derive(Debug, Clone, PartialEq)]
@@ -421,15 +421,13 @@ impl Grep {
                 let matcher = glob.compile_matcher();
                 
                 // Try matching against the full path
-                if matcher.is_match(&path.to_string_lossy()) {
+                if matcher.is_match(path) {
                     return true;
                 }
                 
                 // Try matching against just the filename
                 if let Some(filename) = path.file_name() {
-                    if let Some(filename_str) = filename.to_str() {
-                        return matcher.is_match(filename_str);
-                    }
+                    return matcher.is_match(filename);
                 }
                 
                 false

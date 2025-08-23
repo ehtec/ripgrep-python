@@ -500,7 +500,8 @@ def error_handler():
             "file1.txt": "content 1",
             "file2.txt": "content 2",
             "file3.txt": "content 3",
-            "files.txt": "multiple chars content"
+            "files.txt": "content s",
+            "filelong.txt": "content long"
         }
         
         for filename, content in single_char_files.items():
@@ -513,11 +514,11 @@ def error_handler():
         assert isinstance(single_results, list)
         
         basenames = [os.path.basename(f) for f in single_results]
-        # Should match file1.txt, file2.txt, file3.txt but not files.txt
-        expected_matches = ["file1.txt", "file2.txt", "file3.txt"]
+        # Should match file1.txt, file2.txt, file3.txt, files.txt but NOT filelong.txt
+        expected_matches = ["file1.txt", "file2.txt", "file3.txt", "files.txt"]
         for expected in expected_matches:
             assert expected in basenames, f"Expected {expected} not found in {basenames}"
-        assert "files.txt" not in basenames, f"files.txt should not match file?.txt pattern"
+        assert "filelong.txt" not in basenames, f"filelong.txt should not match file?.txt pattern"
 
     def test_glob_pattern_character_classes(self):
         """Test glob patterns with character classes"""

@@ -738,6 +738,190 @@ line7: after context"""
         found_unexpected = [f for f in basenames if f in unexpected]
         assert len(found_unexpected) == 0, f"Should not find unexpected files: {found_unexpected}"
 
+    def test_context_merging_within_file(self):
+        """Test that overlapping context blocks are properly merged within a single file"""
+        grep = pyripgrep.Grep()
+        
+        # Create a test file with closely spaced matches
+        context_file = os.path.join(self.tmpdir, "context_merge_test.py")
+        test_content = """# line 1
+def function_a():  # line 2 - MATCH
+    return "result"  # line 3
+    
+def function_b():  # line 5 - MATCH  
+    return "value"   # line 6
+    
+def other_function():  # line 8
+    pass  # line 9
+"""
+        
+        with open(context_file, 'w') as f:
+            f.write(test_content)
+        
+        # Search with C=2 (2 lines context before and after)
+        results = grep.search("def function", path=context_file, output_mode="content", n=True, C=2)
+        
+        # With C=2, the matches on lines 2 and 5 should have overlapping context
+        # Line 2 context: lines 1,3,4 
+        # Line 5 context: lines 3,4,6,7
+        # These should be merged into one continuous block
+        
+        content_str = '\n'.join(results)
+        
+        # Should contain both matches and merged context
+        assert "def function_a():" in content_str
+        assert "def function_b():" in content_str
+        
+        # Should not have duplicate context lines
+        line_3_count = content_str.count('return "result"')
+        assert line_3_count == 1, f"Line 3 should appear only once, found {line_3_count} times"
+        
+        # Should not contain separators within merged context
+        separator_count = content_str.count('--')
+        assert separator_count == 0, f"Should not have separators in merged context, found {separator_count}"
+
+    def test_context_separation_between_files(self):
+        """Test that context blocks from different files are separated properly"""
+        grep = pyripgrep.Grep()
+        
+        # Create two test files
+        file1 = os.path.join(self.tmpdir, "file1.py") 
+        file2 = os.path.join(self.tmpdir, "file2.py")
+        
+        with open(file1, 'w') as f:
+            f.write("""# File 1
+def target_function():  # MATCH
+    return 1
+""")
+            
+        with open(file2, 'w') as f:
+            f.write("""# File 2  
+def target_function():  # MATCH
+    return 2
+""")
+        
+        # Search with context
+        results = grep.search("target_function", path=self.tmpdir, output_mode="content", n=True, C=1)
+        
+        content_str = '\n'.join(results)
+        
+        # Should contain results from both files
+        assert "file1.py" in content_str
+        assert "file2.py" in content_str
+        assert "return 1" in content_str
+        assert "return 2" in content_str
+        
+        # Should have separator between different files
+        separator_count = content_str.count('--')
+        assert separator_count >= 1, f"Should have at least one separator between files, found {separator_count}"
+
+    def test_context_range_separation_within_file(self):
+        """Test that non-overlapping context ranges within a file are separated"""
+        grep = pyripgrep.Grep()
+        
+        # Create a test file with widely spaced matches
+        context_file = os.path.join(self.tmpdir, "range_separation_test.py")
+        test_content = """# line 1
+def first_match():  # line 2 - MATCH
+    return "first"  # line 3
+
+# Many lines in between
+# line 5
+# line 6  
+# line 7
+# line 8
+# line 9
+# line 10
+
+def second_match():  # line 12 - MATCH
+    return "second"  # line 13
+# line 14
+"""
+        
+        with open(context_file, 'w') as f:
+            f.write(test_content)
+        
+        # Search with C=1 (1 line context)
+        results = grep.search("_match", path=context_file, output_mode="content", n=True, C=1)
+        
+        content_str = '\n'.join(results)
+        
+        # Should contain both matches
+        assert "first_match" in content_str
+        assert "second_match" in content_str
+        
+        # Should have separator between non-overlapping ranges
+        separator_count = content_str.count('--')
+        assert separator_count >= 1, f"Should have separator between distant matches, found {separator_count}"
+        
+        # Should not contain the middle lines (5-11) that are not in context
+        assert "line 6" not in content_str
+        assert "line 10" not in content_str
+
+    def test_context_match_preference(self):
+        """Test that when a line is both context and match, it's shown as match"""
+        grep = pyripgrep.Grep()
+        
+        # Create a test file where one match's context overlaps with another match
+        context_file = os.path.join(self.tmpdir, "match_preference_test.py")
+        test_content = """line 1
+error_function()  # line 2 - will be MATCH and also context for line 4
+line 3
+another_error()   # line 4 - MATCH
+line 5
+"""
+        
+        with open(context_file, 'w') as f:
+            f.write(test_content)
+        
+        # Search for "error" with C=1 context
+        results = grep.search("error", path=context_file, output_mode="content", n=True, C=1)
+        
+        content_str = '\n'.join(results)
+        
+        # Both lines should appear as matches (using : separator)
+        error_function_matches = [line for line in results if "error_function" in line and ":2:" in line]
+        another_error_matches = [line for line in results if "another_error" in line and ":4:" in line]
+        
+        assert len(error_function_matches) == 1, "error_function should appear as match (with :)"
+        assert len(another_error_matches) == 1, "another_error should appear as match (with :)"
+        
+        # error_function should not appear as context (with -) for another_error
+        error_function_context = [line for line in results if "error_function" in line and "-2:" in line]
+        assert len(error_function_context) == 0, "error_function should not appear as context (with -)"
+
+    def test_head_limit_with_context_and_separators(self):
+        """Test that head_limit correctly limits total output lines including context and separators"""
+        grep = pyripgrep.Grep()
+        
+        # Create test files with multiple matches
+        for i in range(1, 4):
+            filepath = os.path.join(self.tmpdir, f"test{i}.py")
+            with open(filepath, 'w') as f:
+                f.write(f"""# File {i}
+def test_function_{i}():  # MATCH
+    return {i}
+""")
+        
+        # Search with head_limit=5, which should include context and separators
+        results = grep.search("test_function", path=self.tmpdir, output_mode="content", n=True, C=1, head_limit=5)
+        
+        # Should have exactly 5 or fewer output lines total
+        assert len(results) <= 5, f"head_limit=5 should limit total output, got {len(results)} lines"
+        
+        # Should include context and/or separators in the count
+        content_str = '\n'.join(results)
+        
+        # Should have some results but be truncated
+        assert len(results) > 0, "Should have some results"
+        
+        # Might have separators counted in the limit
+        has_separators = "--" in content_str
+        if has_separators:
+            separator_count = content_str.count('--')
+            content_lines = len([line for line in results if line != "--"])
+            assert len(results) == content_lines + separator_count, "Total should include separators"
+
 
 def run_comprehensive_test():
     """Run a comprehensive test of the Grep interface"""

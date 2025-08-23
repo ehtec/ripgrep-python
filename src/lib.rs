@@ -556,8 +556,20 @@ impl Grep {
         }
 
         let mut py_results: Vec<String> = Vec::new();
+        let mut first_file = true;
 
         for (file_path, mut file_results) in file_groups {
+            // Add separator between different files (except first file)
+            if !first_file && !py_results.is_empty() {
+                if let Some(limit) = head_limit {
+                    if py_results.len() >= limit {
+                        break;
+                    }
+                }
+                py_results.push("--".to_string());
+            }
+            first_file = false;
+
             // Sort results by line number
             file_results.sort_by_key(|r| r.line_number);
 

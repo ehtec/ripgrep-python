@@ -444,10 +444,19 @@ line7: after context"""
         )
 
         assert isinstance(results, list)
+        
+        # Debug: print actual results to see what we're getting
+        print(f"\nDEBUG: Got {len(results)} results:")
+        for i, result in enumerate(results):
+            print(f"  {i+1}: {result!r}")
+        
         assert len(results) <= 5
+        
+        # Filter out separator lines for the file type check
+        content_lines = [line for line in results if line != "--"]
 
-        # Results should be from Python files only
-        for result in results:
+        # Results should be from Python files only (excluding separator lines)
+        for result in content_lines:
             # Format should be path:line_num:content due to -n flag
             assert isinstance(result, str)
             assert result.count(":") >= 2  # At least path:line_num:content
@@ -658,6 +667,9 @@ line7: after context"""
         content = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="content")
         assert isinstance(content, list)
         for line in content:
+            # Skip separator lines
+            if line == "--":
+                continue
             assert ".py:" in line, f"Wrong file type in content mode: {line}"
         
         # Test with count mode

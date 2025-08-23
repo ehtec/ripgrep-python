@@ -562,25 +562,92 @@ impl Grep {
             let mut sorted_results = file_results;
             sorted_results.sort_by_key(|r| r.line_number);
 
-            // Process matches and merge overlapping context
-            let mut last_end_line = 0u64;
-            let mut needs_separator = false;
+            // Build merged continuous ranges 
+            let mut merged_ranges = Vec::new();
+            let mut current_start = 0u64;
+            let mut current_end = 0u64;
+            let mut current_lines = Vec::new();
 
             for result in sorted_results.iter() {
-                if let Some(limit) = head_limit {
-                    if py_results.len() >= limit {
-                        break;
-                    }
-                }
-
-                let context_start = if result.before_context.is_empty() {
+                let range_start = if result.before_context.is_empty() {
                     result.line_number
                 } else {
                     result.line_number - result.before_context.len() as u64
                 };
+                
+                let range_end = if result.after_context.is_empty() {
+                    result.line_number
+                } else {
+                    result.line_number + result.after_context.len() as u64
+                };
 
-                // Add separator if there's a gap between context blocks
-                if needs_separator && context_start > last_end_line + 1 {
+                // Check if this range overlaps with the current merged range
+                if current_end == 0 || range_start > current_end + 1 {
+                    // No overlap - finalize current range and start new one
+                    if current_end > 0 {
+                        merged_ranges.push((current_start, current_end, current_lines.clone()));
+                    }
+                    current_start = range_start;
+                    current_end = range_end;
+                    current_lines.clear();
+                    
+                    // Add all lines from this result to current range
+                    for (i, before_line) in result.before_context.iter().enumerate() {
+                        let line_num = result.line_number - result.before_context.len() as u64 + i as u64;
+                        current_lines.push((line_num, before_line.clone(), false)); // false = context
+                    }
+                    current_lines.push((result.line_number, result.content.clone(), true)); // true = match
+                    for (i, after_line) in result.after_context.iter().enumerate() {
+                        let line_num = result.line_number + 1 + i as u64;
+                        current_lines.push((line_num, after_line.clone(), false)); // false = context
+                    }
+                } else {
+                    // Overlap - extend current range and merge lines
+                    current_end = std::cmp::max(current_end, range_end);
+                    
+                    // Add lines from this result, avoiding duplicates
+                    let mut lines_to_add = Vec::new();
+                    
+                    // Add before context
+                    for (i, before_line) in result.before_context.iter().enumerate() {
+                        let line_num = result.line_number - result.before_context.len() as u64 + i as u64;
+                        lines_to_add.push((line_num, before_line.clone(), false));
+                    }
+                    // Add match
+                    lines_to_add.push((result.line_number, result.content.clone(), true));
+                    // Add after context
+                    for (i, after_line) in result.after_context.iter().enumerate() {
+                        let line_num = result.line_number + 1 + i as u64;
+                        lines_to_add.push((line_num, after_line.clone(), false));
+                    }
+                    
+                    // Merge lines, preferring matches over context
+                    for (new_line_num, new_content, is_match) in lines_to_add {
+                        if let Some(existing) = current_lines.iter_mut().find(|(line_num, _, _)| *line_num == new_line_num) {
+                            // Line already exists - prefer match over context
+                            if is_match && !existing.2 {
+                                existing.1 = new_content;
+                                existing.2 = true;
+                            }
+                        } else {
+                            current_lines.push((new_line_num, new_content, is_match));
+                        }
+                    }
+                    
+                    // Sort lines by line number
+                    current_lines.sort_by_key(|(line_num, _, _)| *line_num);
+                }
+            }
+            
+            // Don't forget the last range
+            if current_end > 0 {
+                merged_ranges.push((current_start, current_end, current_lines));
+            }
+
+            // Output merged ranges
+            for (i, (_start, _end, lines)) in merged_ranges.iter().enumerate() {
+                if i > 0 {
+                    // Add separator between ranges
                     if let Some(limit) = head_limit {
                         if py_results.len() >= limit {
                             break;
@@ -588,72 +655,26 @@ impl Grep {
                     }
                     py_results.push("--".to_string());
                 }
-
-                // Add before context lines (skip if they overlap with previous match's after context)
-                for (i, before_line) in result.before_context.iter().enumerate() {
-                    let context_line_num = result.line_number - result.before_context.len() as u64 + i as u64;
+                
+                for (line_num, content, is_match) in lines {
+                    if let Some(limit) = head_limit {
+                        if py_results.len() >= limit {
+                            break;
+                        }
+                    }
                     
-                    // Skip if this context line was already shown
-                    if context_line_num <= last_end_line {
-                        continue;
-                    }
-
-                    if let Some(limit) = head_limit {
-                        if py_results.len() >= limit {
-                            break;
-                        }
-                    }
-
                     let formatted_line = if show_line_numbers {
-                        format!("{}-{}:{}", result.path, context_line_num, before_line)
+                        if *is_match {
+                            format!("{}:{}:{}", sorted_results[0].path, line_num, content)
+                        } else {
+                            format!("{}-{}:{}", sorted_results[0].path, line_num, content)
+                        }
                     } else {
-                        format!("{}:{}", result.path, before_line)
+                        format!("{}:{}", sorted_results[0].path, content)
                     };
                     py_results.push(formatted_line);
                 }
-
-                // Add the match line (uses : separator)
-                if let Some(limit) = head_limit {
-                    if py_results.len() >= limit {
-                        break;
-                    }
-                }
-
-                let main_line = if show_line_numbers {
-                    format!("{}:{}:{}", result.path, result.line_number, result.content)
-                } else {
-                    format!("{}:{}", result.path, result.content)
-                };
-                py_results.push(main_line);
-
-                // Add after context lines (use - separator for context)
-                for (i, after_line) in result.after_context.iter().enumerate() {
-                    if let Some(limit) = head_limit {
-                        if py_results.len() >= limit {
-                            break;
-                        }
-                    }
-
-                    let context_line_num = result.line_number + 1 + i as u64;
-                    let formatted_line = if show_line_numbers {
-                        format!("{}-{}:{}", result.path, context_line_num, after_line)
-                    } else {
-                        format!("{}:{}", result.path, after_line)
-                    };
-                    py_results.push(formatted_line);
-                }
-
-                // Update the last line shown
-                last_end_line = if result.after_context.is_empty() {
-                    result.line_number
-                } else {
-                    result.line_number + result.after_context.len() as u64
-                };
-                needs_separator = true;
             }
-
-            // Add separator between files (except for last file)
-            first_file = false;
         }
 
         Ok(py_results.into_py(py))

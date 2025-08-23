@@ -118,7 +118,7 @@ impl Grep {
                     line_numbers,
                     head_limit,
                 )?;
-                Ok(self.format_content_results(py, results, line_numbers)?)
+                Ok(self.format_content_results(py, results, line_numbers, head_limit)?)
             }
             OutputMode::FilesWithMatches => {
                 let files = self.search_files(&matcher, path, glob, r#type, head_limit)?;
@@ -165,20 +165,13 @@ impl Grep {
         before_context: u64,
         after_context: u64,
         _line_numbers: bool,
-        head_limit: Option<usize>,
+        _head_limit: Option<usize>,
     ) -> PyResult<Vec<ContentResult>> {
         let mut results = Vec::new();
-        let mut result_count = 0;
 
         let walker = self.build_walker(path, glob, file_type)?;
 
         for entry in walker {
-            if let Some(limit) = head_limit {
-                if result_count >= limit {
-                    break;
-                }
-            }
-
             let entry = entry.map_err(|e| PyValueError::new_err(format!("Walk error: {}", e)))?;
 
             if !entry.file_type().map_or(false, |ft| ft.is_file()) {
@@ -199,7 +192,6 @@ impl Grep {
                 }
             }
 
-            let before_count = results.len();
             self.search_file_content(
                 matcher,
                 entry.path(),
@@ -207,16 +199,6 @@ impl Grep {
                 after_context,
                 &mut results,
             )?;
-
-            // Count actual new results for head_limit
-            if results.len() > before_count {
-                result_count += results.len() - before_count;
-            }
-        }
-
-        // Apply head limit to results
-        if let Some(limit) = head_limit {
-            results.truncate(limit);
         }
 
         Ok(results)
@@ -559,12 +541,26 @@ impl Grep {
         py: Python,
         results: Vec<ContentResult>,
         show_line_numbers: bool,
+        head_limit: Option<usize>,
     ) -> PyResult<PyObject> {
         let mut py_results = Vec::new();
         
         for r in results {
+            // Check head limit before adding more lines
+            if let Some(limit) = head_limit {
+                if py_results.len() >= limit {
+                    break;
+                }
+            }
+            
             // Add before context lines
             for (i, before_line) in r.before_context.iter().enumerate() {
+                if let Some(limit) = head_limit {
+                    if py_results.len() >= limit {
+                        break;
+                    }
+                }
+                
                 let context_line_num = if show_line_numbers {
                     r.line_number - (r.before_context.len() as u64) + (i as u64)
                 } else {
@@ -580,6 +576,12 @@ impl Grep {
             }
             
             // Add the match line
+            if let Some(limit) = head_limit {
+                if py_results.len() >= limit {
+                    break;
+                }
+            }
+            
             let main_line = if show_line_numbers {
                 format!("{}:{}:{}", r.path, r.line_number, r.content)
             } else {
@@ -589,6 +591,12 @@ impl Grep {
             
             // Add after context lines
             for (i, after_line) in r.after_context.iter().enumerate() {
+                if let Some(limit) = head_limit {
+                    if py_results.len() >= limit {
+                        break;
+                    }
+                }
+                
                 let context_line_num = if show_line_numbers {
                     r.line_number + 1 + (i as u64)
                 } else {

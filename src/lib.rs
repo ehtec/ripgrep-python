@@ -547,107 +547,95 @@ impl Grep {
             return Ok(Vec::<String>::new().into_py(py));
         }
 
-        // Group results by file for proper formatting
-        use std::collections::HashMap;
-        let mut file_groups: HashMap<String, Vec<&ContentResult>> = HashMap::new();
-        for result in &results {
-            file_groups.entry(result.path.clone()).or_insert_with(Vec::new).push(result);
+        use std::collections::{BTreeMap, HashMap};
+
+        // Group results by file without cloning paths
+        let mut file_groups: HashMap<&str, Vec<&ContentResult>> = HashMap::new();
+        for r in &results {
+            file_groups.entry(&r.path).or_default().push(r);
         }
 
-        let mut py_results = Vec::new();
-        let mut first_file = true;
+        let mut py_results: Vec<String> = Vec::new();
 
-        for (_file_path, file_results) in file_groups {
+        for (file_path, mut file_results) in file_groups {
             // Sort results by line number
-            let mut sorted_results = file_results;
-            sorted_results.sort_by_key(|r| r.line_number);
+            file_results.sort_by_key(|r| r.line_number);
 
-            // Build merged continuous ranges 
-            let mut merged_ranges = Vec::new();
-            let mut current_start = 0u64;
-            let mut current_end = 0u64;
-            let mut current_lines = Vec::new();
+            // Build merged continuous ranges
+            let mut merged_ranges: Vec<(u64, u64, Vec<(u64, String, bool)>)> = Vec::new();
+            let mut current_start: u64 = 0;
+            let mut current_end: u64 = 0;
+            // line_num -> (content, is_match)
+            let mut current_lines: BTreeMap<u64, (String, bool)> = BTreeMap::new();
 
-            for result in sorted_results.iter() {
-                let range_start = if result.before_context.is_empty() {
+            // helper to finalize a range
+            let mut finalize_range = |start: u64,
+                                      end: u64,
+                                      lines: BTreeMap<u64, (String, bool)>,
+                                      out: &mut Vec<(u64, u64, Vec<(u64, String, bool)>)>| {
+                if end > 0 {
+                    let vec_lines = lines
+                        .into_iter()
+                        .map(|(ln, (s, m))| (ln, s, m))
+                        .collect::<Vec<_>>();
+                    out.push((start, end, vec_lines));
+                }
+            };
+
+            for result in file_results.iter() {
+                let before_len = result.before_context.len() as u64;
+                let after_len = result.after_context.len() as u64;
+
+                // NOTE: keep exact arithmetic semantics (no saturating_sub) to preserve behavior.
+                let range_start = result.line_number - before_len;
+                let range_end = if after_len == 0 {
                     result.line_number
                 } else {
-                    result.line_number - result.before_context.len() as u64
-                };
-                
-                let range_end = if result.after_context.is_empty() {
-                    result.line_number
-                } else {
-                    result.line_number + result.after_context.len() as u64
+                    result.line_number + after_len
                 };
 
-                // Check if this range overlaps with the current merged range
+                // start new range if non-overlapping (> current_end + 1)
                 if current_end == 0 || range_start > current_end + 1 {
-                    // No overlap - finalize current range and start new one
-                    if current_end > 0 {
-                        merged_ranges.push((current_start, current_end, current_lines.clone()));
-                    }
+                    // finalize previous
+                    finalize_range(current_start, current_end, std::mem::take(&mut current_lines), &mut merged_ranges);
+
                     current_start = range_start;
                     current_end = range_end;
-                    current_lines.clear();
-                    
-                    // Add all lines from this result to current range
-                    for (i, before_line) in result.before_context.iter().enumerate() {
-                        let line_num = result.line_number - result.before_context.len() as u64 + i as u64;
-                        current_lines.push((line_num, before_line.clone(), false)); // false = context
-                    }
-                    current_lines.push((result.line_number, result.content.clone(), true)); // true = match
-                    for (i, after_line) in result.after_context.iter().enumerate() {
-                        let line_num = result.line_number + 1 + i as u64;
-                        current_lines.push((line_num, after_line.clone(), false)); // false = context
-                    }
                 } else {
-                    // Overlap - extend current range and merge lines
-                    current_end = std::cmp::max(current_end, range_end);
-                    
-                    // Add lines from this result, avoiding duplicates
-                    let mut lines_to_add = Vec::new();
-                    
-                    // Add before context
-                    for (i, before_line) in result.before_context.iter().enumerate() {
-                        let line_num = result.line_number - result.before_context.len() as u64 + i as u64;
-                        lines_to_add.push((line_num, before_line.clone(), false));
+                    // extend current
+                    if range_end > current_end {
+                        current_end = range_end;
                     }
-                    // Add match
-                    lines_to_add.push((result.line_number, result.content.clone(), true));
-                    // Add after context
-                    for (i, after_line) in result.after_context.iter().enumerate() {
-                        let line_num = result.line_number + 1 + i as u64;
-                        lines_to_add.push((line_num, after_line.clone(), false));
-                    }
-                    
-                    // Merge lines, preferring matches over context
-                    for (new_line_num, new_content, is_match) in lines_to_add {
-                        if let Some(existing) = current_lines.iter_mut().find(|(line_num, _, _)| *line_num == new_line_num) {
-                            // Line already exists - prefer match over context
-                            if is_match && !existing.2 {
-                                existing.1 = new_content;
-                                existing.2 = true;
-                            }
-                        } else {
-                            current_lines.push((new_line_num, new_content, is_match));
+                }
+
+                // merge lines for this result into current_lines (prefer match over context)
+                // before context
+                for (i, before_line) in result.before_context.iter().enumerate() {
+                    let ln = result.line_number - before_len + i as u64;
+                    current_lines.entry(ln).or_insert_with(|| (before_line.clone(), false));
+                }
+                // the match line
+                current_lines
+                    .entry(result.line_number)
+                    .and_modify(|e| {
+                        if !e.1 {
+                            *e = (result.content.clone(), true);
                         }
-                    }
-                    
-                    // Sort lines by line number
-                    current_lines.sort_by_key(|(line_num, _, _)| *line_num);
+                    })
+                    .or_insert_with(|| (result.content.clone(), true));
+                // after context
+                for (i, after_line) in result.after_context.iter().enumerate() {
+                    let ln = result.line_number + 1 + i as u64;
+                    current_lines.entry(ln).or_insert_with(|| (after_line.clone(), false));
                 }
             }
-            
-            // Don't forget the last range
-            if current_end > 0 {
-                merged_ranges.push((current_start, current_end, current_lines));
-            }
+
+            // finalize last range
+            finalize_range(current_start, current_end, current_lines, &mut merged_ranges);
 
             // Output merged ranges
             for (i, (_start, _end, lines)) in merged_ranges.iter().enumerate() {
                 if i > 0 {
-                    // Add separator between ranges
                     if let Some(limit) = head_limit {
                         if py_results.len() >= limit {
                             break;
@@ -655,24 +643,24 @@ impl Grep {
                     }
                     py_results.push("--".to_string());
                 }
-                
+
                 for (line_num, content, is_match) in lines {
                     if let Some(limit) = head_limit {
                         if py_results.len() >= limit {
                             break;
                         }
                     }
-                    
-                    let formatted_line = if show_line_numbers {
+
+                    let formatted = if show_line_numbers {
                         if *is_match {
-                            format!("{}:{}:{}", sorted_results[0].path, line_num, content)
+                            format!("{file_path}:{line_num}:{content}")
                         } else {
-                            format!("{}-{}:{}", sorted_results[0].path, line_num, content)
+                            format!("{file_path}-{line_num}:{content}")
                         }
                     } else {
-                        format!("{}:{}", sorted_results[0].path, content)
+                        format!("{file_path}:{content}")
                     };
-                    py_results.push(formatted_line);
+                    py_results.push(formatted);
                 }
             }
         }

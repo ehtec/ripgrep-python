@@ -444,12 +444,6 @@ line7: after context"""
         )
 
         assert isinstance(results, list)
-        
-        # Debug: print actual results to see what we're getting
-        print(f"\nDEBUG: Got {len(results)} results:")
-        for i, result in enumerate(results):
-            print(f"  {i+1}: {result!r}")
-        
         assert len(results) <= 5
         
         # Filter out separator lines for the file type check
@@ -457,9 +451,11 @@ line7: after context"""
 
         # Results should be from Python files only (excluding separator lines)
         for result in content_lines:
-            # Format should be path:line_num:content due to -n flag
+            # Format should be path:line_num:content for matches or path-line_num:content for context
             assert isinstance(result, str)
-            assert result.count(":") >= 2  # At least path:line_num:content
+            # Both match lines (:) and context lines (-) should have at least 1 colon
+            assert result.count(":") >= 1  # At least path:content or path-line:content
+            assert ".py" in result  # Should be from Python files
 
     def test_default_behavior(self):
         """Test default behavior matches specification"""

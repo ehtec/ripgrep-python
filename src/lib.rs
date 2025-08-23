@@ -535,7 +535,7 @@ impl Grep {
         }
     }
 
-    /// Format content results for Python
+    /// Format content results for Python to match ripgrep CLI output
     fn format_content_results(
         &self,
         py: Python,
@@ -543,73 +543,117 @@ impl Grep {
         show_line_numbers: bool,
         head_limit: Option<usize>,
     ) -> PyResult<PyObject> {
+        if results.is_empty() {
+            return Ok(Vec::<String>::new().into_py(py));
+        }
+
+        // Group results by file for proper formatting
+        use std::collections::HashMap;
+        let mut file_groups: HashMap<String, Vec<&ContentResult>> = HashMap::new();
+        for result in &results {
+            file_groups.entry(result.path.clone()).or_insert_with(Vec::new).push(result);
+        }
+
         let mut py_results = Vec::new();
-        
-        for r in results {
-            // Check head limit before adding more lines
-            if let Some(limit) = head_limit {
-                if py_results.len() >= limit {
-                    break;
-                }
-            }
-            
-            // Add before context lines
-            for (i, before_line) in r.before_context.iter().enumerate() {
+        let mut first_file = true;
+
+        for (_file_path, file_results) in file_groups {
+            // Sort results by line number
+            let mut sorted_results = file_results;
+            sorted_results.sort_by_key(|r| r.line_number);
+
+            // Process matches and merge overlapping context
+            let mut last_end_line = 0u64;
+            let mut needs_separator = false;
+
+            for result in sorted_results.iter() {
                 if let Some(limit) = head_limit {
                     if py_results.len() >= limit {
                         break;
                     }
                 }
-                
-                let context_line_num = if show_line_numbers {
-                    r.line_number - (r.before_context.len() as u64) + (i as u64)
+
+                let context_start = if result.before_context.is_empty() {
+                    result.line_number
                 } else {
-                    0 // Not used when line numbers are off
+                    result.line_number - result.before_context.len() as u64
                 };
-                
-                let formatted_line = if show_line_numbers {
-                    format!("{}:{}:{}", r.path, context_line_num, before_line)
-                } else {
-                    format!("{}:{}", r.path, before_line)
-                };
-                py_results.push(formatted_line);
-            }
-            
-            // Add the match line
-            if let Some(limit) = head_limit {
-                if py_results.len() >= limit {
-                    break;
+
+                // Add separator if there's a gap between context blocks
+                if needs_separator && context_start > last_end_line + 1 {
+                    if let Some(limit) = head_limit {
+                        if py_results.len() >= limit {
+                            break;
+                        }
+                    }
+                    py_results.push("--".to_string());
                 }
-            }
-            
-            let main_line = if show_line_numbers {
-                format!("{}:{}:{}", r.path, r.line_number, r.content)
-            } else {
-                format!("{}:{}", r.path, r.content)
-            };
-            py_results.push(main_line);
-            
-            // Add after context lines
-            for (i, after_line) in r.after_context.iter().enumerate() {
+
+                // Add before context lines (skip if they overlap with previous match's after context)
+                for (i, before_line) in result.before_context.iter().enumerate() {
+                    let context_line_num = result.line_number - result.before_context.len() as u64 + i as u64;
+                    
+                    // Skip if this context line was already shown
+                    if context_line_num <= last_end_line {
+                        continue;
+                    }
+
+                    if let Some(limit) = head_limit {
+                        if py_results.len() >= limit {
+                            break;
+                        }
+                    }
+
+                    let formatted_line = if show_line_numbers {
+                        format!("{}-{}:{}", result.path, context_line_num, before_line)
+                    } else {
+                        format!("{}:{}", result.path, before_line)
+                    };
+                    py_results.push(formatted_line);
+                }
+
+                // Add the match line (uses : separator)
                 if let Some(limit) = head_limit {
                     if py_results.len() >= limit {
                         break;
                     }
                 }
-                
-                let context_line_num = if show_line_numbers {
-                    r.line_number + 1 + (i as u64)
+
+                let main_line = if show_line_numbers {
+                    format!("{}:{}:{}", result.path, result.line_number, result.content)
                 } else {
-                    0 // Not used when line numbers are off
+                    format!("{}:{}", result.path, result.content)
                 };
-                
-                let formatted_line = if show_line_numbers {
-                    format!("{}:{}:{}", r.path, context_line_num, after_line)
+                py_results.push(main_line);
+
+                // Add after context lines (use - separator for context)
+                for (i, after_line) in result.after_context.iter().enumerate() {
+                    if let Some(limit) = head_limit {
+                        if py_results.len() >= limit {
+                            break;
+                        }
+                    }
+
+                    let context_line_num = result.line_number + 1 + i as u64;
+                    let formatted_line = if show_line_numbers {
+                        format!("{}-{}:{}", result.path, context_line_num, after_line)
+                    } else {
+                        format!("{}:{}", result.path, after_line)
+                    };
+                    py_results.push(formatted_line);
+                }
+
+                // Update the last line shown
+                last_end_line = if result.after_context.is_empty() {
+                    result.line_number
                 } else {
-                    format!("{}:{}", r.path, after_line)
+                    result.line_number + result.after_context.len() as u64
                 };
-                py_results.push(formatted_line);
+                needs_separator = true;
             }
+
+            // Add separator between files (except for last file)
+            first_file = false;
         }
 
         Ok(py_results.into_py(py))

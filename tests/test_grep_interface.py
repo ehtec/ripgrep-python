@@ -149,8 +149,10 @@ def error_handler():
         assert all(isinstance(line, str) for line in content)
         assert len(content) > 0
 
-        # Content should contain file paths and content
+        # Content should contain file paths and content (skip separators)
         for line in content:
+            if line == "--":  # Skip separator lines
+                continue
             assert ":" in line  # Should have path:content format
 
         # Test count mode
@@ -236,13 +238,17 @@ line7: after context"""
         assert isinstance(results_with_nums, list)
         assert isinstance(results_without_nums, list)
 
-        # With line numbers, format should be path:line_num:content
+        # With line numbers, format should be path:line_num:content (skip separators)
         for result in results_with_nums:
+            if result == "--":  # Skip separator lines
+                continue
             parts = result.split(":", 2)  # Split only on first 2 colons
             assert len(parts) >= 2
 
-        # Without line numbers, format should be path:content
+        # Without line numbers, format should be path:content (skip separators)
         for result in results_without_nums:
+            if result == "--":  # Skip separator lines
+                continue
             assert isinstance(result, str)
 
     def test_case_insensitive_flag(self):

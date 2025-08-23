@@ -168,20 +168,62 @@ def error_handler():
         """Test -A, -B, and -C context parameters"""
         grep = pyripgrep.Grep()
 
-        # Test -A (after context) - requires output_mode="content"
-        results_a = grep.search("ERROR", path=self.tmpdir, output_mode="content", A=2)
+        # Create a test file with known line structure for context testing
+        context_file = os.path.join(self.tmpdir, "context_test.txt")
+        context_content = """line1: before context
+line2: before context
+line3: before context
+line4: TARGET LINE with ERROR
+line5: after context
+line6: after context
+line7: after context"""
+        
+        with open(context_file, 'w') as f:
+            f.write(context_content)
+
+        # Test -A (after context) - should show 2 lines after the match
+        results_a = grep.search("TARGET LINE", path=context_file, output_mode="content", A=2)
         assert isinstance(results_a, list)
         assert len(results_a) > 0
+        
+        # Should contain the target line and 2 lines after
+        content_a = '\n'.join(results_a)
+        assert "TARGET LINE with ERROR" in content_a
+        assert "line5: after context" in content_a
+        assert "line6: after context" in content_a
+        # Should not contain line7 (beyond A=2)
+        assert "line7: after context" not in content_a
 
-        # Test -B (before context) - requires output_mode="content"
-        results_b = grep.search("ERROR", path=self.tmpdir, output_mode="content", B=2)
+        # Test -B (before context) - should show 2 lines before the match
+        results_b = grep.search("TARGET LINE", path=context_file, output_mode="content", B=2)
         assert isinstance(results_b, list)
         assert len(results_b) > 0
+        
+        # Should contain the target line and 2 lines before
+        content_b = '\n'.join(results_b)
+        assert "TARGET LINE with ERROR" in content_b
+        assert "line2: before context" in content_b
+        assert "line3: before context" in content_b
+        # Should not contain line1 (beyond B=2)
+        assert "line1: before context" not in content_b
 
-        # Test -C (context both ways) - requires output_mode="content"
-        results_c = grep.search("ERROR", path=self.tmpdir, output_mode="content", C=2)
+        # Test -C (context both ways) - should show 2 lines before AND after
+        results_c = grep.search("TARGET LINE", path=context_file, output_mode="content", C=2)
         assert isinstance(results_c, list)
         assert len(results_c) > 0
+        
+        # Should contain the target line, 2 lines before, and 2 lines after
+        content_c = '\n'.join(results_c)
+        assert "TARGET LINE with ERROR" in content_c
+        # Before context
+        assert "line2: before context" in content_c
+        assert "line3: before context" in content_c
+        # After context
+        assert "line5: after context" in content_c
+        assert "line6: after context" in content_c
+        # Should not contain lines beyond C=2
+        assert "line1: before context" not in content_c
+        assert "line7: after context" not in content_c
 
     def test_line_numbers_flag(self):
         """Test -n flag for showing line numbers"""

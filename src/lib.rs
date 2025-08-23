@@ -445,30 +445,70 @@ impl Grep {
         after_context: u64,
         results: &mut Vec<ContentResult>,
     ) -> PyResult<()> {
+        use std::io::{BufRead, BufReader};
+        
         let file = File::open(path)
             .map_err(|e| PyValueError::new_err(format!("Cannot open file {}: {}", path.display(), e)))?;
 
         let path_str = path.to_string_lossy().to_string();
-        let mut searcher = Searcher::new();
+        let reader = BufReader::new(file);
+        let lines: Result<Vec<String>, _> = reader.lines().collect();
+        
+        let lines = match lines {
+            Ok(lines) => lines,
+            Err(_) => return Ok(()), // Skip problematic files silently
+        };
 
-        // For now, implement basic search without context
-        // TODO: Implement proper context handling
-        let result = searcher.search_file(matcher, &file, sinks::UTF8(|lnum, line| {
+        let mut searcher = Searcher::new();
+        
+        // Find all matching line numbers first
+        let mut matching_lines = Vec::new();
+        for (line_idx, line) in lines.iter().enumerate() {
+            let line_num = (line_idx + 1) as u64;
+            if matcher.is_match(line.as_bytes()).unwrap_or(false) {
+                matching_lines.push(line_num);
+            }
+        }
+
+        // For each match, collect context and create result
+        for &match_line in &matching_lines {
+            let match_idx = (match_line - 1) as usize;
+            
+            // Collect before context
+            let before_start = if before_context == 0 {
+                match_idx
+            } else {
+                match_idx.saturating_sub(before_context as usize)
+            };
+            
+            let mut before_ctx = Vec::new();
+            if before_context > 0 {
+                for i in before_start..match_idx {
+                    if i < lines.len() {
+                        before_ctx.push(lines[i].clone());
+                    }
+                }
+            }
+
+            // Collect after context
+            let mut after_ctx = Vec::new();
+            if after_context > 0 {
+                let after_end = std::cmp::min(lines.len(), match_idx + 1 + after_context as usize);
+                for i in (match_idx + 1)..after_end {
+                    after_ctx.push(lines[i].clone());
+                }
+            }
+
             results.push(ContentResult {
                 path: path_str.clone(),
-                line_number: lnum,
-                content: line.trim_end().to_string(),
-                before_context: Vec::new(), // TODO: implement context
-                after_context: Vec::new(),  // TODO: implement context
+                line_number: match_line,
+                content: lines[match_idx].clone(),
+                before_context: before_ctx,
+                after_context: after_ctx,
             });
-            Ok(true)
-        }));
-
-        // Ignore errors for problematic files (e.g., binary files)
-        match result {
-            Ok(_) => Ok(()),
-            Err(_) => Ok(()), // Skip problematic files silently
         }
+
+        Ok(())
     }
 
     /// Check if file has any matches
@@ -519,18 +559,51 @@ impl Grep {
         results: Vec<ContentResult>,
         show_line_numbers: bool,
     ) -> PyResult<PyObject> {
-        let py_results: PyResult<Vec<String>> = results
-            .into_iter()
-            .map(|r| {
-                if show_line_numbers {
-                    Ok(format!("{}:{}:{}", r.path, r.line_number, r.content))
+        let mut py_results = Vec::new();
+        
+        for r in results {
+            // Add before context lines
+            for (i, before_line) in r.before_context.iter().enumerate() {
+                let context_line_num = if show_line_numbers {
+                    r.line_number - (r.before_context.len() as u64) + (i as u64)
                 } else {
-                    Ok(format!("{}:{}", r.path, r.content))
-                }
-            })
-            .collect();
+                    0 // Not used when line numbers are off
+                };
+                
+                let formatted_line = if show_line_numbers {
+                    format!("{}:{}:{}", r.path, context_line_num, before_line)
+                } else {
+                    format!("{}:{}", r.path, before_line)
+                };
+                py_results.push(formatted_line);
+            }
+            
+            // Add the match line
+            let main_line = if show_line_numbers {
+                format!("{}:{}:{}", r.path, r.line_number, r.content)
+            } else {
+                format!("{}:{}", r.path, r.content)
+            };
+            py_results.push(main_line);
+            
+            // Add after context lines
+            for (i, after_line) in r.after_context.iter().enumerate() {
+                let context_line_num = if show_line_numbers {
+                    r.line_number + 1 + (i as u64)
+                } else {
+                    0 // Not used when line numbers are off
+                };
+                
+                let formatted_line = if show_line_numbers {
+                    format!("{}:{}:{}", r.path, context_line_num, after_line)
+                } else {
+                    format!("{}:{}", r.path, after_line)
+                };
+                py_results.push(formatted_line);
+            }
+        }
 
-        Ok(py_results?.into_py(py))
+        Ok(py_results.into_py(py))
     }
 
     /// Format count results for Python

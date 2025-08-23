@@ -429,6 +429,264 @@ def error_handler():
         # Default multiline should be False
         # Default line numbers should be False
 
+    def test_glob_pattern_basic_extensions(self):
+        """Test basic glob pattern matching with extensions"""
+        grep = pyripgrep.Grep()
+        
+        # Test Python files only
+        py_results = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="files_with_matches")
+        assert isinstance(py_results, list)
+        for filepath in py_results:
+            assert filepath.endswith('.py'), f"Non-Python file found: {filepath}"
+        
+        # Test Rust files only
+        rs_results = grep.search("struct", path=self.tmpdir, glob="*.rs", output_mode="files_with_matches")
+        assert isinstance(rs_results, list)
+        for filepath in rs_results:
+            assert filepath.endswith('.rs'), f"Non-Rust file found: {filepath}"
+            
+        # Test JavaScript files only
+        js_results = grep.search("function", path=self.tmpdir, glob="*.js", output_mode="files_with_matches")
+        assert isinstance(js_results, list)
+        for filepath in js_results:
+            assert filepath.endswith('.js'), f"Non-JavaScript file found: {filepath}"
+
+    def test_glob_pattern_exact_filenames(self):
+        """Test glob patterns with exact filenames"""
+        grep = pyripgrep.Grep()
+        
+        # Search for specific filename
+        readme_results = grep.search("ripgrep-python", path=self.tmpdir, glob="README.md", output_mode="files_with_matches")
+        assert isinstance(readme_results, list)
+        for filepath in readme_results:
+            assert "README.md" in filepath, f"Wrong file found: {filepath}"
+
+    def test_glob_pattern_wildcards(self):
+        """Test glob patterns with wildcards"""
+        grep = pyripgrep.Grep()
+        
+        # Create additional test files with specific patterns
+        wildcard_files = {
+            "test_main.py": "def test_function(): pass",
+            "main_app.py": "def main(): pass", 
+            "helper_utils.py": "def helper(): pass"
+        }
+        
+        for filename, content in wildcard_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test prefix wildcard
+        main_results = grep.search("def", path=self.tmpdir, glob="main*.py", output_mode="files_with_matches")
+        assert isinstance(main_results, list)
+        for filepath in main_results:
+            basename = os.path.basename(filepath)
+            assert basename.startswith('main') and basename.endswith('.py'), f"Wrong pattern match: {basename}"
+            
+        # Test suffix wildcard
+        test_results = grep.search("def", path=self.tmpdir, glob="*_main.py", output_mode="files_with_matches")
+        assert isinstance(test_results, list)
+        for filepath in test_results:
+            basename = os.path.basename(filepath)
+            assert basename.endswith('_main.py'), f"Wrong pattern match: {basename}"
+
+    def test_glob_pattern_question_mark(self):
+        """Test glob patterns with single character wildcards"""
+        grep = pyripgrep.Grep()
+        
+        # Create files for single character testing
+        single_char_files = {
+            "file1.txt": "content 1",
+            "file2.txt": "content 2",
+            "file3.txt": "content 3",
+            "files.txt": "multiple chars content"
+        }
+        
+        for filename, content in single_char_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test single character wildcard
+        single_results = grep.search("content", path=self.tmpdir, glob="file?.txt", output_mode="files_with_matches")
+        assert isinstance(single_results, list)
+        
+        basenames = [os.path.basename(f) for f in single_results]
+        # Should match file1.txt, file2.txt, file3.txt but not files.txt
+        expected_matches = ["file1.txt", "file2.txt", "file3.txt"]
+        for expected in expected_matches:
+            assert expected in basenames, f"Expected {expected} not found in {basenames}"
+        assert "files.txt" not in basenames, f"files.txt should not match file?.txt pattern"
+
+    def test_glob_pattern_character_classes(self):
+        """Test glob patterns with character classes"""
+        grep = pyripgrep.Grep()
+        
+        # Create files for character class testing
+        char_class_files = {
+            "log1.txt": "log entry 1", 
+            "log2.txt": "log entry 2",
+            "log3.txt": "log entry 3",
+            "log4.txt": "log entry 4",
+            "loga.txt": "log entry a"
+        }
+        
+        for filename, content in char_class_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test character class pattern
+        class_results = grep.search("log entry", path=self.tmpdir, glob="log[123].txt", output_mode="files_with_matches")
+        assert isinstance(class_results, list)
+        
+        basenames = [os.path.basename(f) for f in class_results]
+        # Should match log1.txt, log2.txt, log3.txt but not log4.txt or loga.txt
+        expected_matches = ["log1.txt", "log2.txt", "log3.txt"]
+        for expected in expected_matches:
+            assert expected in basenames, f"Expected {expected} not found in {basenames}"
+        
+        unexpected_matches = ["log4.txt", "loga.txt"]
+        for unexpected in unexpected_matches:
+            assert unexpected not in basenames, f"Unexpected {unexpected} found in {basenames}"
+
+    def test_glob_pattern_with_directories(self):
+        """Test glob patterns that include directory paths"""
+        grep = pyripgrep.Grep()
+        
+        # Test matching files in the subdirectory we already created
+        nested_results = grep.search("helper", path=self.tmpdir, glob="src/*.py", output_mode="files_with_matches")
+        assert isinstance(nested_results, list)
+        
+        # All results should be in src/ directory and be .py files
+        for filepath in nested_results:
+            assert "src" in filepath and filepath.endswith('.py'), f"Wrong directory match: {filepath}"
+
+    def test_glob_pattern_case_sensitivity(self):
+        """Test case sensitivity in glob patterns"""
+        grep = pyripgrep.Grep()
+        
+        # Create files with different cases
+        case_files = {
+            "Test.PY": "# uppercase extension",
+            "test.py": "# lowercase extension"
+        }
+        
+        for filename, content in case_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test uppercase pattern
+        upper_results = grep.search("#", path=self.tmpdir, glob="*.PY", output_mode="files_with_matches")
+        assert isinstance(upper_results, list)
+        upper_basenames = [os.path.basename(f) for f in upper_results]
+        assert "Test.PY" in upper_basenames, "Case-sensitive matching should find Test.PY"
+        assert "test.py" not in upper_basenames, "Case-sensitive matching should not find test.py with *.PY"
+        
+        # Test lowercase pattern
+        lower_results = grep.search("#", path=self.tmpdir, glob="*.py", output_mode="files_with_matches")
+        assert isinstance(lower_results, list)
+        lower_basenames = [os.path.basename(f) for f in lower_results]
+        # Should find lowercase but not uppercase
+        assert any(f.endswith('.py') for f in lower_basenames), "Should find .py files"
+
+    def test_glob_pattern_no_matches(self):
+        """Test glob patterns that don't match any files"""
+        grep = pyripgrep.Grep()
+        
+        # Test pattern that shouldn't match anything
+        no_match = grep.search("anything", path=self.tmpdir, glob="*.nonexistent", output_mode="files_with_matches")
+        assert isinstance(no_match, list)
+        assert len(no_match) == 0, "Should return empty list for non-matching pattern"
+
+    def test_glob_pattern_with_all_output_modes(self):
+        """Test that glob patterns work with all output modes"""
+        grep = pyripgrep.Grep()
+        
+        # Test with files_with_matches mode
+        files = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="files_with_matches")
+        assert isinstance(files, list)
+        for filepath in files:
+            assert filepath.endswith('.py'), f"Wrong file type in files mode: {filepath}"
+        
+        # Test with content mode
+        content = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="content")
+        assert isinstance(content, list)
+        for line in content:
+            assert ".py:" in line, f"Wrong file type in content mode: {line}"
+        
+        # Test with count mode
+        counts = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="count")
+        assert isinstance(counts, dict)
+        for filepath in counts.keys():
+            assert filepath.endswith('.py'), f"Wrong file type in count mode: {filepath}"
+
+    def test_glob_pattern_complex_names(self):
+        """Test glob patterns with complex file names"""
+        grep = pyripgrep.Grep()
+        
+        # Create files with complex names
+        complex_files = {
+            "test.backup.py": "# backup file content",
+            "app.min.js": "// minified javascript",
+            "config.local.json": '{"local": true}',
+            "data.test.txt": "test data content"
+        }
+        
+        for filename, content in complex_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test complex extension patterns
+        backup_results = grep.search("backup", path=self.tmpdir, glob="*.backup.py", output_mode="files_with_matches")
+        assert isinstance(backup_results, list)
+        assert len(backup_results) == 1, "Should find exactly one backup file"
+        assert "test.backup.py" in backup_results[0], "Should find the backup Python file"
+        
+        min_results = grep.search("minified", path=self.tmpdir, glob="*.min.js", output_mode="files_with_matches")
+        assert isinstance(min_results, list)
+        assert len(min_results) == 1, "Should find exactly one minified file"
+        assert "app.min.js" in min_results[0], "Should find the minified JavaScript file"
+
+    def test_glob_pattern_multiple_extensions_at_once(self):
+        """Test glob patterns that match multiple file extensions in one pattern"""
+        grep = pyripgrep.Grep()
+        
+        # Create files with different extensions
+        multi_files = {
+            "script.py": "Python content here",
+            "script.js": "JavaScript content here", 
+            "script.rs": "Rust content here",
+            "script.go": "Go content here",
+            "data.json": "JSON content here",
+            "readme.md": "Markdown content here",
+            "other.txt": "Text content here"
+        }
+        
+        for filename, content in multi_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test brace expansion pattern {py,js,rs} - MUST work
+        brace_results = grep.search("content here", path=self.tmpdir, glob="*.{py,js,rs}", output_mode="files_with_matches")
+        assert isinstance(brace_results, list)
+        assert len(brace_results) > 0, "Brace expansion *.{py,js,rs} must find matching files"
+        
+        # Should find py, js, rs files
+        basenames = [os.path.basename(f) for f in brace_results]
+        expected_extensions = ["script.py", "script.js", "script.rs"]
+        found_expected = [f for f in basenames if f in expected_extensions]
+        assert len(found_expected) == 3, f"Should find all 3 expected files (py,js,rs), got: {basenames}"
+        
+        # Should not find other extensions
+        unexpected = ["script.go", "data.json", "readme.md", "other.txt"]
+        found_unexpected = [f for f in basenames if f in unexpected]
+        assert len(found_unexpected) == 0, f"Should not find unexpected files: {found_unexpected}"
+
 
 def run_comprehensive_test():
     """Run a comprehensive test of the Grep interface"""

@@ -7,6 +7,7 @@ use ignore::WalkBuilder;
 use grep_searcher::{Searcher, sinks};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use std::fs::File;
+use glob::Pattern;
 
 /// Output modes for search results
 #[derive(Debug, Clone, PartialEq)]
@@ -415,16 +416,24 @@ impl Grep {
 
     /// Check if file matches the given glob pattern
     fn matches_glob(&self, path: &std::path::Path, pattern: &str) -> bool {
-        // Simple glob matching - for now just check file extension patterns
-        if pattern.starts_with("*.") {
-            let ext = &pattern[2..];
-            if let Some(file_ext) = path.extension() {
-                if let Some(file_ext_str) = file_ext.to_str() {
-                    return file_ext_str == ext;
+        match Pattern::new(pattern) {
+            Ok(glob_pattern) => {
+                // Try matching against the full path
+                if glob_pattern.matches(&path.to_string_lossy()) {
+                    return true;
                 }
+                
+                // Try matching against just the filename
+                if let Some(filename) = path.file_name() {
+                    if let Some(filename_str) = filename.to_str() {
+                        return glob_pattern.matches(filename_str);
+                    }
+                }
+                
+                false
             }
+            Err(_) => false, // Invalid pattern
         }
-        false
     }
 
     /// Search a single file for content with context

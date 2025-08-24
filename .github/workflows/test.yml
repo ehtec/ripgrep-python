@@ -42,9 +42,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements-test.txt
     
-    - name: Build ripgrep-python
+    - name: Build and install ripgrep-python
       run: |
         make build
+        pip install dist/*.whl
     
     - name: Run interface tests with pytest
       run: |

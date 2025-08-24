@@ -465,9 +465,9 @@ line7: after context"""
             actual_exception = None
             
             try:
-                # Search for a pattern that would normally take longer than timeout
+                # Search for a very expensive pattern that will definitely timeout
                 grep.search(
-                    r".*(main|function|struct).*\{.*", 
+                    r".*([a-zA-Z]+.*){3,}.*", 
                     path=repo_path,
                     output_mode="content",
                     timeout=timeout_value

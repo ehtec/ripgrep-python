@@ -149,8 +149,10 @@ def error_handler():
         assert all(isinstance(line, str) for line in content)
         assert len(content) > 0
 
-        # Content should contain file paths and content
+        # Content should contain file paths and content (skip separators)
         for line in content:
+            if line == "--":  # Skip separator lines
+                continue
             assert ":" in line  # Should have path:content format
 
         # Test count mode
@@ -168,20 +170,62 @@ def error_handler():
         """Test -A, -B, and -C context parameters"""
         grep = pyripgrep.Grep()
 
-        # Test -A (after context) - requires output_mode="content"
-        results_a = grep.search("ERROR", path=self.tmpdir, output_mode="content", A=2)
+        # Create a test file with known line structure for context testing
+        context_file = os.path.join(self.tmpdir, "context_test.txt")
+        context_content = """line1: before context
+line2: before context
+line3: before context
+line4: TARGET LINE with ERROR
+line5: after context
+line6: after context
+line7: after context"""
+        
+        with open(context_file, 'w') as f:
+            f.write(context_content)
+
+        # Test -A (after context) - should show 2 lines after the match
+        results_a = grep.search("TARGET LINE", path=context_file, output_mode="content", A=2)
         assert isinstance(results_a, list)
         assert len(results_a) > 0
+        
+        # Should contain the target line and 2 lines after
+        content_a = '\n'.join(results_a)
+        assert "TARGET LINE with ERROR" in content_a
+        assert "line5: after context" in content_a
+        assert "line6: after context" in content_a
+        # Should not contain line7 (beyond A=2)
+        assert "line7: after context" not in content_a
 
-        # Test -B (before context) - requires output_mode="content"
-        results_b = grep.search("ERROR", path=self.tmpdir, output_mode="content", B=2)
+        # Test -B (before context) - should show 2 lines before the match
+        results_b = grep.search("TARGET LINE", path=context_file, output_mode="content", B=2)
         assert isinstance(results_b, list)
         assert len(results_b) > 0
+        
+        # Should contain the target line and 2 lines before
+        content_b = '\n'.join(results_b)
+        assert "TARGET LINE with ERROR" in content_b
+        assert "line2: before context" in content_b
+        assert "line3: before context" in content_b
+        # Should not contain line1 (beyond B=2)
+        assert "line1: before context" not in content_b
 
-        # Test -C (context both ways) - requires output_mode="content"
-        results_c = grep.search("ERROR", path=self.tmpdir, output_mode="content", C=2)
+        # Test -C (context both ways) - should show 2 lines before AND after
+        results_c = grep.search("TARGET LINE", path=context_file, output_mode="content", C=2)
         assert isinstance(results_c, list)
         assert len(results_c) > 0
+        
+        # Should contain the target line, 2 lines before, and 2 lines after
+        content_c = '\n'.join(results_c)
+        assert "TARGET LINE with ERROR" in content_c
+        # Before context
+        assert "line2: before context" in content_c
+        assert "line3: before context" in content_c
+        # After context
+        assert "line5: after context" in content_c
+        assert "line6: after context" in content_c
+        # Should not contain lines beyond C=2
+        assert "line1: before context" not in content_c
+        assert "line7: after context" not in content_c
 
     def test_line_numbers_flag(self):
         """Test -n flag for showing line numbers"""
@@ -194,13 +238,17 @@ def error_handler():
         assert isinstance(results_with_nums, list)
         assert isinstance(results_without_nums, list)
 
-        # With line numbers, format should be path:line_num:content
+        # With line numbers, format should be path:line_num:content (skip separators)
         for result in results_with_nums:
+            if result == "--":  # Skip separator lines
+                continue
             parts = result.split(":", 2)  # Split only on first 2 colons
             assert len(parts) >= 2
 
-        # Without line numbers, format should be path:content
+        # Without line numbers, format should be path:content (skip separators)
         for result in results_without_nums:
+            if result == "--":  # Skip separator lines
+                continue
             assert isinstance(result, str)
 
     def test_case_insensitive_flag(self):
@@ -342,12 +390,16 @@ def error_handler():
         grep = pyripgrep.Grep()
 
         # Test invalid output mode
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             grep.search("test", path=self.tmpdir, output_mode="invalid_mode")
 
         # Test invalid path
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             grep.search("test", path="/nonexistent/path/that/does/not/exist")
+            
+        # Test invalid regex pattern
+        with pytest.raises(ValueError):
+            grep.search("[invalid regex", path=self.tmpdir)
 
     def test_empty_results(self):
         """Test behavior when no matches are found"""
@@ -403,12 +455,17 @@ def error_handler():
 
         assert isinstance(results, list)
         assert len(results) <= 5
+        
+        # Filter out separator lines for the file type check
+        content_lines = [line for line in results if line != "--"]
 
-        # Results should be from Python files only
-        for result in results:
-            # Format should be path:line_num:content due to -n flag
+        # Results should be from Python files only (excluding separator lines)
+        for result in content_lines:
+            # Format should be path:line_num:content for matches or path-line_num:content for context
             assert isinstance(result, str)
-            assert result.count(":") >= 2  # At least path:line_num:content
+            # Both match lines (:) and context lines (-) should have at least 1 colon
+            assert result.count(":") >= 1  # At least path:content or path-line:content
+            assert ".py" in result  # Should be from Python files
 
     def test_default_behavior(self):
         """Test default behavior matches specification"""
@@ -428,6 +485,452 @@ def error_handler():
         # Default case sensitivity should be case-sensitive
         # Default multiline should be False
         # Default line numbers should be False
+
+    def test_glob_pattern_basic_extensions(self):
+        """Test basic glob pattern matching with extensions"""
+        grep = pyripgrep.Grep()
+        
+        # Test Python files only
+        py_results = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="files_with_matches")
+        assert isinstance(py_results, list)
+        for filepath in py_results:
+            assert filepath.endswith('.py'), f"Non-Python file found: {filepath}"
+        
+        # Test Rust files only
+        rs_results = grep.search("struct", path=self.tmpdir, glob="*.rs", output_mode="files_with_matches")
+        assert isinstance(rs_results, list)
+        for filepath in rs_results:
+            assert filepath.endswith('.rs'), f"Non-Rust file found: {filepath}"
+            
+        # Test JavaScript files only
+        js_results = grep.search("function", path=self.tmpdir, glob="*.js", output_mode="files_with_matches")
+        assert isinstance(js_results, list)
+        for filepath in js_results:
+            assert filepath.endswith('.js'), f"Non-JavaScript file found: {filepath}"
+
+    def test_glob_pattern_exact_filenames(self):
+        """Test glob patterns with exact filenames"""
+        grep = pyripgrep.Grep()
+        
+        # Search for specific filename
+        readme_results = grep.search("ripgrep-python", path=self.tmpdir, glob="README.md", output_mode="files_with_matches")
+        assert isinstance(readme_results, list)
+        for filepath in readme_results:
+            assert "README.md" in filepath, f"Wrong file found: {filepath}"
+
+    def test_glob_pattern_wildcards(self):
+        """Test glob patterns with wildcards"""
+        grep = pyripgrep.Grep()
+        
+        # Create additional test files with specific patterns
+        wildcard_files = {
+            "test_main.py": "def test_function(): pass",
+            "main_app.py": "def main(): pass", 
+            "helper_utils.py": "def helper(): pass"
+        }
+        
+        for filename, content in wildcard_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test prefix wildcard
+        main_results = grep.search("def", path=self.tmpdir, glob="main*.py", output_mode="files_with_matches")
+        assert isinstance(main_results, list)
+        for filepath in main_results:
+            basename = os.path.basename(filepath)
+            assert basename.startswith('main') and basename.endswith('.py'), f"Wrong pattern match: {basename}"
+            
+        # Test suffix wildcard
+        test_results = grep.search("def", path=self.tmpdir, glob="*_main.py", output_mode="files_with_matches")
+        assert isinstance(test_results, list)
+        for filepath in test_results:
+            basename = os.path.basename(filepath)
+            assert basename.endswith('_main.py'), f"Wrong pattern match: {basename}"
+
+    def test_glob_pattern_question_mark(self):
+        """Test glob patterns with single character wildcards"""
+        grep = pyripgrep.Grep()
+        
+        # Create files for single character testing
+        single_char_files = {
+            "file1.txt": "content 1",
+            "file2.txt": "content 2",
+            "file3.txt": "content 3",
+            "files.txt": "content s",
+            "filelong.txt": "content long"
+        }
+        
+        for filename, content in single_char_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test single character wildcard
+        single_results = grep.search("content", path=self.tmpdir, glob="file?.txt", output_mode="files_with_matches")
+        assert isinstance(single_results, list)
+        
+        basenames = [os.path.basename(f) for f in single_results]
+        # Should match file1.txt, file2.txt, file3.txt, files.txt but NOT filelong.txt
+        expected_matches = ["file1.txt", "file2.txt", "file3.txt", "files.txt"]
+        for expected in expected_matches:
+            assert expected in basenames, f"Expected {expected} not found in {basenames}"
+        assert "filelong.txt" not in basenames, f"filelong.txt should not match file?.txt pattern"
+
+    def test_glob_pattern_character_classes(self):
+        """Test glob patterns with character classes"""
+        grep = pyripgrep.Grep()
+        
+        # Create files for character class testing
+        char_class_files = {
+            "log1.txt": "log entry 1", 
+            "log2.txt": "log entry 2",
+            "log3.txt": "log entry 3",
+            "log4.txt": "log entry 4",
+            "loga.txt": "log entry a"
+        }
+        
+        for filename, content in char_class_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test character class pattern
+        class_results = grep.search("log entry", path=self.tmpdir, glob="log[123].txt", output_mode="files_with_matches")
+        assert isinstance(class_results, list)
+        
+        basenames = [os.path.basename(f) for f in class_results]
+        # Should match log1.txt, log2.txt, log3.txt but not log4.txt or loga.txt
+        expected_matches = ["log1.txt", "log2.txt", "log3.txt"]
+        for expected in expected_matches:
+            assert expected in basenames, f"Expected {expected} not found in {basenames}"
+        
+        unexpected_matches = ["log4.txt", "loga.txt"]
+        for unexpected in unexpected_matches:
+            assert unexpected not in basenames, f"Unexpected {unexpected} found in {basenames}"
+
+    def test_glob_pattern_with_directories(self):
+        """Test glob patterns that include directory paths"""
+        grep = pyripgrep.Grep()
+        
+        # Test matching files in the subdirectory we already created
+        nested_results = grep.search("helper", path=self.tmpdir, glob="src/*.py", output_mode="files_with_matches")
+        assert isinstance(nested_results, list)
+        
+        # All results should be in src/ directory and be .py files
+        for filepath in nested_results:
+            assert os.path.basename(os.path.dirname(filepath)) == 'src' and filepath.endswith('.py'), f"Wrong directory match: {filepath}"
+
+    def test_glob_pattern_case_sensitivity(self):
+        """Test case sensitivity in glob patterns"""
+        grep = pyripgrep.Grep()
+        
+        # Create files with different cases
+        case_files = {
+            "Test.PY": "# uppercase extension",
+            "test.py": "# lowercase extension"
+        }
+        
+        for filename, content in case_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test uppercase pattern
+        upper_results = grep.search("#", path=self.tmpdir, glob="*.PY", output_mode="files_with_matches")
+        assert isinstance(upper_results, list)
+        upper_basenames = [os.path.basename(f) for f in upper_results]
+        assert "Test.PY" in upper_basenames, "Case-sensitive matching should find Test.PY"
+        assert "test.py" not in upper_basenames, "Case-sensitive matching should not find test.py with *.PY"
+        
+        # Test lowercase pattern
+        lower_results = grep.search("#", path=self.tmpdir, glob="*.py", output_mode="files_with_matches")
+        assert isinstance(lower_results, list)
+        lower_basenames = [os.path.basename(f) for f in lower_results]
+        # Should find lowercase but not uppercase
+        assert any(f.endswith('.py') for f in lower_basenames), "Should find .py files"
+
+    def test_glob_pattern_no_matches(self):
+        """Test glob patterns that don't match any files"""
+        grep = pyripgrep.Grep()
+        
+        # Test pattern that shouldn't match anything
+        no_match = grep.search("anything", path=self.tmpdir, glob="*.nonexistent", output_mode="files_with_matches")
+        assert isinstance(no_match, list)
+        assert len(no_match) == 0, "Should return empty list for non-matching pattern"
+
+    def test_glob_pattern_with_all_output_modes(self):
+        """Test that glob patterns work with all output modes"""
+        grep = pyripgrep.Grep()
+        
+        # Test with files_with_matches mode
+        files = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="files_with_matches")
+        assert isinstance(files, list)
+        for filepath in files:
+            assert filepath.endswith('.py'), f"Wrong file type in files mode: {filepath}"
+        
+        # Test with content mode
+        content = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="content")
+        assert isinstance(content, list)
+        for line in content:
+            # Skip separator lines
+            if line == "--":
+                continue
+            assert ".py:" in line, f"Wrong file type in content mode: {line}"
+        
+        # Test with count mode
+        counts = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="count")
+        assert isinstance(counts, dict)
+        for filepath in counts.keys():
+            assert filepath.endswith('.py'), f"Wrong file type in count mode: {filepath}"
+
+    def test_glob_pattern_complex_names(self):
+        """Test glob patterns with complex file names"""
+        grep = pyripgrep.Grep()
+        
+        # Create files with complex names
+        complex_files = {
+            "test.backup.py": "# backup file content",
+            "app.min.js": "// minified javascript",
+            "config.local.json": '{"local": true}',
+            "data.test.txt": "test data content"
+        }
+        
+        for filename, content in complex_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test complex extension patterns
+        backup_results = grep.search("backup", path=self.tmpdir, glob="*.backup.py", output_mode="files_with_matches")
+        assert isinstance(backup_results, list)
+        assert len(backup_results) == 1, "Should find exactly one backup file"
+        assert "test.backup.py" in backup_results[0], "Should find the backup Python file"
+        
+        min_results = grep.search("minified", path=self.tmpdir, glob="*.min.js", output_mode="files_with_matches")
+        assert isinstance(min_results, list)
+        assert len(min_results) == 1, "Should find exactly one minified file"
+        assert "app.min.js" in min_results[0], "Should find the minified JavaScript file"
+
+    def test_glob_pattern_multiple_extensions_at_once(self):
+        """Test glob patterns that match multiple file extensions in one pattern"""
+        grep = pyripgrep.Grep()
+        
+        # Create files with different extensions
+        multi_files = {
+            "script.py": "Python content here",
+            "script.js": "JavaScript content here", 
+            "script.rs": "Rust content here",
+            "script.go": "Go content here",
+            "data.json": "JSON content here",
+            "readme.md": "Markdown content here",
+            "other.txt": "Text content here"
+        }
+        
+        for filename, content in multi_files.items():
+            filepath = os.path.join(self.tmpdir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test brace expansion pattern {py,js,rs} - MUST work
+        brace_results = grep.search("content here", path=self.tmpdir, glob="*.{py,js,rs}", output_mode="files_with_matches")
+        assert isinstance(brace_results, list)
+        assert len(brace_results) > 0, "Brace expansion *.{py,js,rs} must find matching files"
+        
+        # Should find py, js, rs files
+        basenames = [os.path.basename(f) for f in brace_results]
+        expected_extensions = ["script.py", "script.js", "script.rs"]
+        found_expected = [f for f in basenames if f in expected_extensions]
+        assert len(found_expected) == 3, f"Should find all 3 expected files (py,js,rs), got: {basenames}"
+        
+        # Should not find other extensions
+        unexpected = ["script.go", "data.json", "readme.md", "other.txt"]
+        found_unexpected = [f for f in basenames if f in unexpected]
+        assert len(found_unexpected) == 0, f"Should not find unexpected files: {found_unexpected}"
+
+    def test_context_merging_within_file(self):
+        """Test that overlapping context blocks are properly merged within a single file"""
+        grep = pyripgrep.Grep()
+        
+        # Create a test file with closely spaced matches
+        context_file = os.path.join(self.tmpdir, "context_merge_test.py")
+        test_content = """# line 1
+def function_a():  # line 2 - MATCH
+    return "result"  # line 3
+    
+def function_b():  # line 5 - MATCH  
+    return "value"   # line 6
+    
+def other_function():  # line 8
+    pass  # line 9
+"""
+        
+        with open(context_file, 'w') as f:
+            f.write(test_content)
+        
+        # Search with C=2 (2 lines context before and after)
+        results = grep.search("def function", path=context_file, output_mode="content", n=True, C=2)
+        
+        # With C=2, the matches on lines 2 and 5 should have overlapping context
+        # Line 2 context: lines 1,3,4 
+        # Line 5 context: lines 3,4,6,7
+        # These should be merged into one continuous block
+        
+        content_str = '\n'.join(results)
+        
+        # Should contain both matches and merged context
+        assert "def function_a():" in content_str
+        assert "def function_b():" in content_str
+        
+        # Should not have duplicate context lines
+        line_3_count = content_str.count('return "result"')
+        assert line_3_count == 1, f"Line 3 should appear only once, found {line_3_count} times"
+        
+        # Should not contain separators within merged context
+        separator_count = content_str.count('--')
+        assert separator_count == 0, f"Should not have separators in merged context, found {separator_count}"
+
+    def test_context_separation_between_files(self):
+        """Test that context blocks from different files are separated properly"""
+        grep = pyripgrep.Grep()
+        
+        # Create two test files
+        file1 = os.path.join(self.tmpdir, "file1.py") 
+        file2 = os.path.join(self.tmpdir, "file2.py")
+        
+        with open(file1, 'w') as f:
+            f.write("""# File 1
+def target_function():  # MATCH
+    return 1
+""")
+            
+        with open(file2, 'w') as f:
+            f.write("""# File 2  
+def target_function():  # MATCH
+    return 2
+""")
+        
+        # Search with context
+        results = grep.search("target_function", path=self.tmpdir, output_mode="content", n=True, C=1)
+        
+        content_str = '\n'.join(results)
+        
+        # Should contain results from both files
+        assert "file1.py" in content_str
+        assert "file2.py" in content_str
+        assert "return 1" in content_str
+        assert "return 2" in content_str
+        
+        # Should have separator between different files
+        separator_count = content_str.count('--')
+        assert separator_count >= 1, f"Should have at least one separator between files, found {separator_count}"
+
+    def test_context_range_separation_within_file(self):
+        """Test that non-overlapping context ranges within a file are separated"""
+        grep = pyripgrep.Grep()
+        
+        # Create a test file with widely spaced matches
+        context_file = os.path.join(self.tmpdir, "range_separation_test.py")
+        test_content = """# line 1
+def first_match():  # line 2 - MATCH
+    return "first"  # line 3
+
+# Many lines in between
+# line 5
+# line 6  
+# line 7
+# line 8
+# line 9
+# line 10
+
+def second_match():  # line 12 - MATCH
+    return "second"  # line 13
+# line 14
+"""
+        
+        with open(context_file, 'w') as f:
+            f.write(test_content)
+        
+        # Search with C=1 (1 line context)
+        results = grep.search("_match", path=context_file, output_mode="content", n=True, C=1)
+        
+        content_str = '\n'.join(results)
+        
+        # Should contain both matches
+        assert "first_match" in content_str
+        assert "second_match" in content_str
+        
+        # Should have separator between non-overlapping ranges
+        separator_count = content_str.count('--')
+        assert separator_count >= 1, f"Should have separator between distant matches, found {separator_count}"
+        
+        # Should not contain the middle lines (5-11) that are not in context
+        assert "line 6" not in content_str
+        assert "line 10" not in content_str
+
+    def test_context_match_preference(self):
+        """Test that when a line is both context and match, it's shown as match"""
+        grep = pyripgrep.Grep()
+        
+        # Create a test file where one match's context overlaps with another match
+        context_file = os.path.join(self.tmpdir, "match_preference_test.py")
+        test_content = """line 1
+error_function()  # line 2 - will be MATCH and also context for line 4
+line 3
+another_error()   # line 4 - MATCH
+line 5
+"""
+        
+        with open(context_file, 'w') as f:
+            f.write(test_content)
+        
+        # Search for "error" with C=1 context
+        results = grep.search("error", path=context_file, output_mode="content", n=True, C=1)
+        
+        content_str = '\n'.join(results)
+        
+        # Both lines should appear as matches (using : separator)
+        error_function_matches = [line for line in results if "error_function" in line and ":2:" in line]
+        another_error_matches = [line for line in results if "another_error" in line and ":4:" in line]
+        
+        assert len(error_function_matches) == 1, "error_function should appear as match (with :)"
+        assert len(another_error_matches) == 1, "another_error should appear as match (with :)"
+        
+        # error_function should not appear as context (with -) for another_error
+        error_function_context = [line for line in results if "error_function" in line and "-2:" in line]
+        assert len(error_function_context) == 0, "error_function should not appear as context (with -)"
+
+    def test_head_limit_with_context_and_separators(self):
+        """Test that head_limit correctly limits total output lines including context and separators"""
+        grep = pyripgrep.Grep()
+        
+        # Create test files with multiple matches
+        for i in range(1, 4):
+            filepath = os.path.join(self.tmpdir, f"test{i}.py")
+            with open(filepath, 'w') as f:
+                f.write(f"""# File {i}
+def test_function_{i}():  # MATCH
+    return {i}
+""")
+        
+        # Search with head_limit=5, which should include context and separators
+        results = grep.search("test_function", path=self.tmpdir, output_mode="content", n=True, C=1, head_limit=5)
+        
+        # Should have exactly 5 or fewer output lines total
+        assert len(results) <= 5, f"head_limit=5 should limit total output, got {len(results)} lines"
+        
+        # Should include context and/or separators in the count
+        content_str = '\n'.join(results)
+        
+        # Should have some results but be truncated
+        assert len(results) > 0, "Should have some results"
+        
+        # Might have separators counted in the limit
+        has_separators = "--" in content_str
+        if has_separators:
+            separator_count = content_str.count('--')
+            content_lines = len([line for line in results if line != "--"])
+            assert len(results) == content_lines + separator_count, "Total should include separators"
 
 
 def run_comprehensive_test():

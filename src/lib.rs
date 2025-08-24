@@ -6,7 +6,9 @@ use std::collections::HashSet;
 use ignore::WalkBuilder;
 use grep_searcher::{Searcher, sinks};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
+use grep_matcher::Matcher;
 use std::fs::File;
+use globset::Glob;
 
 /// Output modes for search results
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +118,7 @@ impl Grep {
                     line_numbers,
                     head_limit,
                 )?;
-                Ok(self.format_content_results(py, results, line_numbers)?)
+                Ok(self.format_content_results(py, results, line_numbers, head_limit)?)
             }
             OutputMode::FilesWithMatches => {
                 let files = self.search_files(&matcher, path, glob, r#type, head_limit)?;
@@ -163,20 +165,13 @@ impl Grep {
         before_context: u64,
         after_context: u64,
         _line_numbers: bool,
-        head_limit: Option<usize>,
+        _head_limit: Option<usize>,
     ) -> PyResult<Vec<ContentResult>> {
         let mut results = Vec::new();
-        let mut result_count = 0;
 
         let walker = self.build_walker(path, glob, file_type)?;
 
         for entry in walker {
-            if let Some(limit) = head_limit {
-                if result_count >= limit {
-                    break;
-                }
-            }
-
             let entry = entry.map_err(|e| PyValueError::new_err(format!("Walk error: {}", e)))?;
 
             if !entry.file_type().map_or(false, |ft| ft.is_file()) {
@@ -197,7 +192,6 @@ impl Grep {
                 }
             }
 
-            let before_count = results.len();
             self.search_file_content(
                 matcher,
                 entry.path(),
@@ -205,16 +199,6 @@ impl Grep {
                 after_context,
                 &mut results,
             )?;
-
-            // Count actual new results for head_limit
-            if results.len() > before_count {
-                result_count += results.len() - before_count;
-            }
-        }
-
-        // Apply head limit to results
-        if let Some(limit) = head_limit {
-            results.truncate(limit);
         }
 
         Ok(results)
@@ -415,16 +399,24 @@ impl Grep {
 
     /// Check if file matches the given glob pattern
     fn matches_glob(&self, path: &std::path::Path, pattern: &str) -> bool {
-        // Simple glob matching - for now just check file extension patterns
-        if pattern.starts_with("*.") {
-            let ext = &pattern[2..];
-            if let Some(file_ext) = path.extension() {
-                if let Some(file_ext_str) = file_ext.to_str() {
-                    return file_ext_str == ext;
+        match Glob::new(pattern) {
+            Ok(glob) => {
+                let matcher = glob.compile_matcher();
+                
+                // Try matching against the full path
+                if matcher.is_match(path) {
+                    return true;
                 }
+                
+                // Try matching against just the filename
+                if let Some(filename) = path.file_name() {
+                    return matcher.is_match(filename);
+                }
+                
+                false
             }
+            Err(_) => false, // Invalid pattern
         }
-        false
     }
 
     /// Search a single file for content with context
@@ -436,30 +428,70 @@ impl Grep {
         after_context: u64,
         results: &mut Vec<ContentResult>,
     ) -> PyResult<()> {
+        use std::io::{BufRead, BufReader};
+        
         let file = File::open(path)
             .map_err(|e| PyValueError::new_err(format!("Cannot open file {}: {}", path.display(), e)))?;
 
         let path_str = path.to_string_lossy().to_string();
-        let mut searcher = Searcher::new();
+        let reader = BufReader::new(file);
+        let lines: Result<Vec<String>, _> = reader.lines().collect();
+        
+        let lines = match lines {
+            Ok(lines) => lines,
+            Err(_) => return Ok(()), // Skip problematic files silently
+        };
 
-        // For now, implement basic search without context
-        // TODO: Implement proper context handling
-        let result = searcher.search_file(matcher, &file, sinks::UTF8(|lnum, line| {
+        let mut searcher = Searcher::new();
+        
+        // Find all matching line numbers first
+        let mut matching_lines = Vec::new();
+        for (line_idx, line) in lines.iter().enumerate() {
+            let line_num = (line_idx + 1) as u64;
+            if matcher.is_match(line.as_bytes()).unwrap_or(false) {
+                matching_lines.push(line_num);
+            }
+        }
+
+        // For each match, collect context and create result
+        for &match_line in &matching_lines {
+            let match_idx = (match_line - 1) as usize;
+            
+            // Collect before context
+            let before_start = if before_context == 0 {
+                match_idx
+            } else {
+                match_idx.saturating_sub(before_context as usize)
+            };
+            
+            let mut before_ctx = Vec::new();
+            if before_context > 0 {
+                for i in before_start..match_idx {
+                    if i < lines.len() {
+                        before_ctx.push(lines[i].clone());
+                    }
+                }
+            }
+
+            // Collect after context
+            let mut after_ctx = Vec::new();
+            if after_context > 0 {
+                let after_end = std::cmp::min(lines.len(), match_idx + 1 + after_context as usize);
+                for i in (match_idx + 1)..after_end {
+                    after_ctx.push(lines[i].clone());
+                }
+            }
+
             results.push(ContentResult {
                 path: path_str.clone(),
-                line_number: lnum,
-                content: line.trim_end().to_string(),
-                before_context: Vec::new(), // TODO: implement context
-                after_context: Vec::new(),  // TODO: implement context
+                line_number: match_line,
+                content: lines[match_idx].clone(),
+                before_context: before_ctx,
+                after_context: after_ctx,
             });
-            Ok(true)
-        }));
-
-        // Ignore errors for problematic files (e.g., binary files)
-        match result {
-            Ok(_) => Ok(()),
-            Err(_) => Ok(()), // Skip problematic files silently
         }
+
+        Ok(())
     }
 
     /// Check if file has any matches
@@ -503,25 +535,149 @@ impl Grep {
         }
     }
 
-    /// Format content results for Python
+    /// Format content results for Python to match ripgrep CLI output
     fn format_content_results(
         &self,
         py: Python,
         results: Vec<ContentResult>,
         show_line_numbers: bool,
+        head_limit: Option<usize>,
     ) -> PyResult<PyObject> {
-        let py_results: PyResult<Vec<String>> = results
-            .into_iter()
-            .map(|r| {
-                if show_line_numbers {
-                    Ok(format!("{}:{}:{}", r.path, r.line_number, r.content))
-                } else {
-                    Ok(format!("{}:{}", r.path, r.content))
-                }
-            })
-            .collect();
+        if results.is_empty() {
+            return Ok(Vec::<String>::new().into_py(py));
+        }
 
-        Ok(py_results?.into_py(py))
+        use std::collections::{BTreeMap, HashMap};
+
+        // Group results by file without cloning paths
+        let mut file_groups: HashMap<&str, Vec<&ContentResult>> = HashMap::new();
+        for r in &results {
+            file_groups.entry(&r.path).or_default().push(r);
+        }
+
+        let mut py_results: Vec<String> = Vec::new();
+        let mut first_file = true;
+
+        for (file_path, mut file_results) in file_groups {
+            // Add separator between different files (except first file)
+            if !first_file && !py_results.is_empty() {
+                if let Some(limit) = head_limit {
+                    if py_results.len() >= limit {
+                        break;
+                    }
+                }
+                py_results.push("--".to_string());
+            }
+            first_file = false;
+
+            // Sort results by line number
+            file_results.sort_by_key(|r| r.line_number);
+
+            // Build merged continuous ranges
+            let mut merged_ranges: Vec<(u64, u64, Vec<(u64, String, bool)>)> = Vec::new();
+            let mut current_start: u64 = 0;
+            let mut current_end: u64 = 0;
+            // line_num -> (content, is_match)
+            let mut current_lines: BTreeMap<u64, (String, bool)> = BTreeMap::new();
+
+            // helper to finalize a range
+            let mut finalize_range = |start: u64,
+                                      end: u64,
+                                      lines: BTreeMap<u64, (String, bool)>,
+                                      out: &mut Vec<(u64, u64, Vec<(u64, String, bool)>)>| {
+                if end > 0 {
+                    let vec_lines = lines
+                        .into_iter()
+                        .map(|(ln, (s, m))| (ln, s, m))
+                        .collect::<Vec<_>>();
+                    out.push((start, end, vec_lines));
+                }
+            };
+
+            for result in file_results.iter() {
+                let before_len = result.before_context.len() as u64;
+                let after_len = result.after_context.len() as u64;
+
+                // NOTE: keep exact arithmetic semantics (no saturating_sub) to preserve behavior.
+                let range_start = result.line_number - before_len;
+                let range_end = if after_len == 0 {
+                    result.line_number
+                } else {
+                    result.line_number + after_len
+                };
+
+                // start new range if non-overlapping (> current_end + 1)
+                if current_end == 0 || range_start > current_end + 1 {
+                    // finalize previous
+                    finalize_range(current_start, current_end, std::mem::take(&mut current_lines), &mut merged_ranges);
+
+                    current_start = range_start;
+                    current_end = range_end;
+                } else {
+                    // extend current
+                    if range_end > current_end {
+                        current_end = range_end;
+                    }
+                }
+
+                // merge lines for this result into current_lines (prefer match over context)
+                // before context
+                for (i, before_line) in result.before_context.iter().enumerate() {
+                    let ln = result.line_number - before_len + i as u64;
+                    current_lines.entry(ln).or_insert_with(|| (before_line.clone(), false));
+                }
+                // the match line
+                current_lines
+                    .entry(result.line_number)
+                    .and_modify(|e| {
+                        if !e.1 {
+                            *e = (result.content.clone(), true);
+                        }
+                    })
+                    .or_insert_with(|| (result.content.clone(), true));
+                // after context
+                for (i, after_line) in result.after_context.iter().enumerate() {
+                    let ln = result.line_number + 1 + i as u64;
+                    current_lines.entry(ln).or_insert_with(|| (after_line.clone(), false));
+                }
+            }
+
+            // finalize last range
+            finalize_range(current_start, current_end, current_lines, &mut merged_ranges);
+
+            // Output merged ranges
+            for (i, (_start, _end, lines)) in merged_ranges.iter().enumerate() {
+                if i > 0 {
+                    if let Some(limit) = head_limit {
+                        if py_results.len() >= limit {
+                            break;
+                        }
+                    }
+                    py_results.push("--".to_string());
+                }
+
+                for (line_num, content, is_match) in lines {
+                    if let Some(limit) = head_limit {
+                        if py_results.len() >= limit {
+                            break;
+                        }
+                    }
+
+                    let formatted = if show_line_numbers {
+                        if *is_match {
+                            format!("{file_path}:{line_num}:{content}")
+                        } else {
+                            format!("{file_path}-{line_num}:{content}")
+                        }
+                    } else {
+                        format!("{file_path}:{content}")
+                    };
+                    py_results.push(formatted);
+                }
+            }
+        }
+
+        Ok(py_results.into_py(py))
     }
 
     /// Format count results for Python

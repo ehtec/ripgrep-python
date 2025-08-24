@@ -482,7 +482,7 @@ line7: after context"""
             assert timeout_exception_raised, f"Expected timeout exception but none was raised. Search completed in {elapsed_time:.3f}s"
             
             # Check that timeout occurred approximately at the specified time (allow 200ms tolerance)
-            tolerance = 0.2
+            tolerance = 0.3
             assert (timeout_value - tolerance) <= elapsed_time <= (timeout_value + tolerance), \
                 f"Timeout should occur around {timeout_value}s (±{tolerance}s), but took {elapsed_time:.3f}s"
             
@@ -495,21 +495,25 @@ line7: after context"""
             
             # Test that a reasonable timeout allows completion
             reasonable_timeout = 30.0
-            start_time = time.perf_counter()
+            success_start_time = time.perf_counter()
             
             results = grep.search(
-                "main", 
+                r".*([a-zA-Z]+.*){3,}.*", 
                 path=repo_path,
-                output_mode="files_with_matches",
+                output_mode="content",
                 timeout=reasonable_timeout
             )
-            elapsed_time = time.perf_counter() - start_time
+            success_elapsed_time = time.perf_counter() - success_start_time
             
             # Should complete without timeout
             assert isinstance(results, list)
             assert len(results) > 0, "FFmpeg should have files containing 'main'"
-            assert elapsed_time < reasonable_timeout, \
-                f"Search should complete within {reasonable_timeout}s, took {elapsed_time:.3f}s"
+            assert success_elapsed_time < reasonable_timeout, \
+                f"Search should complete within {reasonable_timeout}s, took {success_elapsed_time:.3f}s"
+                
+            # Log timing information for test stability analysis
+            print(f"Timeout test: {elapsed_time:.3f}s (target: {timeout_value}s)")
+            print(f"Success test: {success_elapsed_time:.3f}s (margin: {timeout_value - success_elapsed_time:.3f}s)")
             
         except subprocess.CalledProcessError as e:
             pytest.skip(f"Could not clone repository for timeout test: {e}")

@@ -615,7 +615,7 @@ line7: after context"""
         
         # All results should be in src/ directory and be .py files
         for filepath in nested_results:
-            assert "src" in filepath and filepath.endswith('.py'), f"Wrong directory match: {filepath}"
+            assert os.path.basename(os.path.dirname(filepath)) == 'src' and filepath.endswith('.py'), f"Wrong directory match: {filepath}"
 
     def test_glob_pattern_case_sensitivity(self):
         """Test case sensitivity in glob patterns"""

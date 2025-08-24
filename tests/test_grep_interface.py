@@ -390,12 +390,16 @@ line7: after context"""
         grep = pyripgrep.Grep()
 
         # Test invalid output mode
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             grep.search("test", path=self.tmpdir, output_mode="invalid_mode")
 
         # Test invalid path
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             grep.search("test", path="/nonexistent/path/that/does/not/exist")
+            
+        # Test invalid regex pattern
+        with pytest.raises(ValueError):
+            grep.search("[invalid regex", path=self.tmpdir)
 
     def test_empty_results(self):
         """Test behavior when no matches are found"""

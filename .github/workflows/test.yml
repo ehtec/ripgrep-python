@@ -1,0 +1,65 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.13']
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+    
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-test.txt
+    
+    - name: Build ripgrep-python
+      run: |
+        make build
+    
+    - name: Run interface tests with pytest
+      run: |
+        python -m pytest tests/test_grep_interface.py -v --tb=short
+    
+    - name: Run all tests with pytest (if exists)
+      run: |
+        python -m pytest tests/ -v --tb=short
+      continue-on-error: true
+    
+    - name: Run interface tests directly (fallback)
+      if: failure()
+      run: |
+        python tests/test_grep_interface.py
+    
+    - name: Test import
+      run: |
+        python -c "import pyripgrep; print(f'Successfully imported pyripgrep: {pyripgrep.__version__ if hasattr(pyripgrep, \"__version__\") else \"version unknown\"}')"

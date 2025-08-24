@@ -1,4 +1,4 @@
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyValueError, PyTimeoutError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::path::PathBuf;
@@ -9,6 +9,7 @@ use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_matcher::Matcher;
 use std::fs::File;
 use globset::Glob;
+use std::time::{Duration, Instant};
 
 /// Output modes for search results
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +47,20 @@ pub struct CountResult {
     pub count: u64,
 }
 
+/// Timeout helper functions
+#[inline]
+fn deadline_from_secs(timeout: Option<f64>) -> Option<Instant> {
+    timeout.map(|t| Instant::now() + Duration::from_secs_f64(t.max(0.0)))
+}
+
+#[inline]
+fn timed_out(deadline: Option<Instant>) -> bool {
+    match deadline {
+        Some(d) => Instant::now() >= d,
+        None => false,
+    }
+}
+
 /// Main Grep interface that provides ripgrep-like functionality
 #[pyclass(module = "pyripgrep")]
 pub struct Grep {}
@@ -71,7 +86,8 @@ impl Grep {
         i = None,      // -i flag: case insensitive
         r#type = None, // type parameter: file type filter
         head_limit = None,
-        multiline = None
+        multiline = None,
+        timeout = None // timeout in seconds
     ))]
     fn search(
         &self,
@@ -88,6 +104,7 @@ impl Grep {
         r#type: Option<&str>,     // type: file type filter
         head_limit: Option<usize>,
         multiline: Option<bool>,
+        timeout: Option<f64>,     // timeout in seconds
     ) -> PyResult<PyObject> {
         let output_mode = OutputMode::from_str(output_mode.unwrap_or("files_with_matches"))?;
         let path = path.unwrap_or(".");
@@ -105,6 +122,9 @@ impl Grep {
         // Build matcher
         let matcher = self.build_matcher(pattern, case_insensitive, multiline)?;
 
+        // Compute deadline from timeout
+        let deadline = deadline_from_secs(timeout);
+
         // Search based on output mode
         match output_mode {
             OutputMode::Content => {
@@ -117,15 +137,16 @@ impl Grep {
                     after_ctx,
                     line_numbers,
                     head_limit,
+                    deadline,
                 )?;
                 Ok(self.format_content_results(py, results, line_numbers, head_limit)?)
             }
             OutputMode::FilesWithMatches => {
-                let files = self.search_files(&matcher, path, glob, r#type, head_limit)?;
+                let files = self.search_files(&matcher, path, glob, r#type, head_limit, deadline)?;
                 Ok(files.into_py(py))
             }
             OutputMode::Count => {
-                let counts = self.search_count(&matcher, path, glob, r#type, head_limit)?;
+                let counts = self.search_count(&matcher, path, glob, r#type, head_limit, deadline)?;
                 Ok(self.format_count_results(py, counts)?)
             }
         }
@@ -166,12 +187,18 @@ impl Grep {
         after_context: u64,
         _line_numbers: bool,
         _head_limit: Option<usize>,
+        deadline: Option<Instant>,
     ) -> PyResult<Vec<ContentResult>> {
         let mut results = Vec::new();
 
         let walker = self.build_walker(path, glob, file_type)?;
 
         for entry in walker {
+            // Check timeout in walker loop as requested
+            if timed_out(deadline) {
+                return Err(PyTimeoutError::new_err("search timed out"));
+            }
+
             let entry = entry.map_err(|e| PyValueError::new_err(format!("Walk error: {}", e)))?;
 
             if !entry.file_type().map_or(false, |ft| ft.is_file()) {
@@ -212,11 +239,17 @@ impl Grep {
         glob: Option<&str>,
         file_type: Option<&str>,
         head_limit: Option<usize>,
+        deadline: Option<Instant>,
     ) -> PyResult<Vec<String>> {
         let mut files = HashSet::new();
         let walker = self.build_walker(path, glob, file_type)?;
 
         for entry in walker {
+            // Check timeout in walker loop as requested
+            if timed_out(deadline) {
+                return Err(PyTimeoutError::new_err("search timed out"));
+            }
+
             if let Some(limit) = head_limit {
                 if files.len() >= limit {
                     break;
@@ -259,11 +292,17 @@ impl Grep {
         glob: Option<&str>,
         file_type: Option<&str>,
         head_limit: Option<usize>,
+        deadline: Option<Instant>,
     ) -> PyResult<Vec<CountResult>> {
         let mut counts = Vec::new();
         let walker = self.build_walker(path, glob, file_type)?;
 
         for entry in walker {
+            // Check timeout in walker loop as requested
+            if timed_out(deadline) {
+                return Err(PyTimeoutError::new_err("search timed out"));
+            }
+
             if let Some(limit) = head_limit {
                 if counts.len() >= limit {
                     break;

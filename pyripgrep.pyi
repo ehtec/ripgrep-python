@@ -35,6 +35,7 @@ class Grep:
         type: Optional[str] = None,
         head_limit: Optional[int] = None,
         multiline: Optional[bool] = None,
+        timeout: Optional[float] = None,
     ) -> List[str]:
         """
         Search for pattern and return list of files containing matches.
@@ -52,6 +53,7 @@ class Grep:
             type: File type filter (e.g., "rust", "python", "javascript")
             head_limit: Maximum number of results to return
             multiline: Enable multiline mode
+            timeout: Timeout in seconds for the search operation
 
         Returns:
             List of file paths containing matches
@@ -74,6 +76,7 @@ class Grep:
         type: Optional[str] = None,
         head_limit: Optional[int] = None,
         multiline: Optional[bool] = None,
+        timeout: Optional[float] = None,
     ) -> List[str]:
         """
         Search for pattern and return matching lines with context.
@@ -91,6 +94,7 @@ class Grep:
             type: File type filter (e.g., "rust", "python", "javascript")
             head_limit: Maximum number of results to return
             multiline: Enable multiline mode
+            timeout: Timeout in seconds for the search operation
 
         Returns:
             List of matching lines, optionally with line numbers and context.
@@ -114,6 +118,7 @@ class Grep:
         type: Optional[str] = None,
         head_limit: Optional[int] = None,
         multiline: Optional[bool] = None,
+        timeout: Optional[float] = None,
     ) -> Dict[str, int]:
         """
         Search for pattern and return match counts per file.
@@ -131,6 +136,7 @@ class Grep:
             type: File type filter (e.g., "rust", "python", "javascript")
             head_limit: Maximum number of results to return
             multiline: Enable multiline mode
+            timeout: Timeout in seconds for the search operation
 
         Returns:
             Dictionary mapping file paths to number of matches in each file

@@ -1,7 +1,7 @@
 use pyo3::exceptions::{PyValueError, PyTimeoutError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::collections::HashSet;
 use ignore::WalkBuilder;
 use grep_searcher::{Searcher, sinks};
@@ -10,6 +10,24 @@ use grep_matcher::Matcher;
 use std::fs::File;
 use globset::Glob;
 use std::time::{Duration, Instant};
+use std::io;
+
+/// --- Pure-Rust error used while GIL is released ---
+#[derive(Debug)]
+enum RGErr {
+    Walk(ignore::Error),
+    Io(io::Error),
+    Timeout,
+}
+
+fn to_pyerr(e: RGErr) -> PyErr {
+    match e {
+        RGErr::Timeout => PyTimeoutError::new_err("search timed out"),
+        RGErr::Walk(err) => PyValueError::new_err(format!("Walk error: {}", err)),
+        RGErr::Io(err) => PyValueError::new_err(format!("IO error: {}", err)),
+    }
+}
+
 
 /// Output modes for search results
 #[derive(Debug, Clone, PartialEq)]
@@ -125,28 +143,35 @@ impl Grep {
         // Compute deadline from timeout
         let deadline = deadline_from_secs(timeout);
 
-        // Search based on output mode
+        // Build walker outside allow_threads (can raise Python exceptions here)
+        let walker = self.build_walker(path, glob, r#type)?;
+
+        // Search based on output mode (heavy part runs without the GIL)
         match output_mode {
             OutputMode::Content => {
-                let results = self.search_content(
-                    &matcher,
-                    path,
-                    glob,
-                    r#type,
-                    before_ctx,
-                    after_ctx,
-                    line_numbers,
-                    head_limit,
-                    deadline,
-                )?;
+                let results = py.allow_threads(|| {
+                    self.search_content_inner(
+                        &matcher,
+                        walker,
+                        glob,
+                        r#type,
+                        before_ctx,
+                        after_ctx,
+                        deadline,
+                    )
+                }).map_err(to_pyerr)?;
                 Ok(self.format_content_results(py, results, line_numbers, head_limit)?)
             }
             OutputMode::FilesWithMatches => {
-                let files = self.search_files(&matcher, path, glob, r#type, head_limit, deadline)?;
+                let files = py.allow_threads(|| {
+                    self.search_files_inner(&matcher, walker, glob, r#type, head_limit, deadline)
+                }).map_err(to_pyerr)?;
                 Ok(files.into_py(py))
             }
             OutputMode::Count => {
-                let counts = self.search_count(&matcher, path, glob, r#type, head_limit, deadline)?;
+                let counts = py.allow_threads(|| {
+                    self.search_count_inner(&matcher, walker, glob, r#type, head_limit, deadline)
+                }).map_err(to_pyerr)?;
                 Ok(self.format_count_results(py, counts)?)
             }
         }
@@ -176,30 +201,25 @@ impl Grep {
             .map_err(|e| PyValueError::new_err(format!("Invalid pattern: {}", e)))
     }
 
-    /// Search for content with context
-    fn search_content(
+    /// Search for content with context (GIL-free inner implementation)
+    fn search_content_inner(
         &self,
         matcher: &RegexMatcher,
-        path: &str,
+        walker: ignore::Walk,
         glob: Option<&str>,
         file_type: Option<&str>,
         before_context: u64,
         after_context: u64,
-        _line_numbers: bool,
-        _head_limit: Option<usize>,
         deadline: Option<Instant>,
-    ) -> PyResult<Vec<ContentResult>> {
+    ) -> Result<Vec<ContentResult>, RGErr> {
         let mut results = Vec::new();
 
-        let walker = self.build_walker(path, glob, file_type)?;
-
         for entry in walker {
-            // Check timeout in walker loop as requested
             if timed_out(deadline) {
-                return Err(PyTimeoutError::new_err("search timed out"));
+                return Err(RGErr::Timeout);
             }
 
-            let entry = entry.map_err(|e| PyValueError::new_err(format!("Walk error: {}", e)))?;
+            let entry = entry.map_err(RGErr::Walk)?;
 
             if !entry.file_type().map_or(false, |ft| ft.is_file()) {
                 continue;
@@ -219,7 +239,7 @@ impl Grep {
                 }
             }
 
-            self.search_file_content(
+            self.search_file_content_inner(
                 matcher,
                 entry.path(),
                 before_context,
@@ -231,23 +251,21 @@ impl Grep {
         Ok(results)
     }
 
-    /// Search for files containing matches
-    fn search_files(
+    /// Search for files containing matches (GIL-free inner implementation)
+    fn search_files_inner(
         &self,
         matcher: &RegexMatcher,
-        path: &str,
+        walker: ignore::Walk,
         glob: Option<&str>,
         file_type: Option<&str>,
         head_limit: Option<usize>,
         deadline: Option<Instant>,
-    ) -> PyResult<Vec<String>> {
+    ) -> Result<Vec<String>, RGErr> {
         let mut files = HashSet::new();
-        let walker = self.build_walker(path, glob, file_type)?;
 
         for entry in walker {
-            // Check timeout in walker loop as requested
             if timed_out(deadline) {
-                return Err(PyTimeoutError::new_err("search timed out"));
+                return Err(RGErr::Timeout);
             }
 
             if let Some(limit) = head_limit {
@@ -256,7 +274,7 @@ impl Grep {
                 }
             }
 
-            let entry = entry.map_err(|e| PyValueError::new_err(format!("Walk error: {}", e)))?;
+            let entry = entry.map_err(RGErr::Walk)?;
 
             if !entry.file_type().map_or(false, |ft| ft.is_file()) {
                 continue;
@@ -276,7 +294,7 @@ impl Grep {
                 }
             }
 
-            if self.file_has_match(matcher, entry.path())? {
+            if self.file_has_match_inner(matcher, entry.path())? {
                 files.insert(entry.path().to_string_lossy().to_string());
             }
         }
@@ -284,23 +302,21 @@ impl Grep {
         Ok(files.into_iter().collect())
     }
 
-    /// Search and count matches per file
-    fn search_count(
+    /// Search and count matches per file (GIL-free inner implementation)
+    fn search_count_inner(
         &self,
         matcher: &RegexMatcher,
-        path: &str,
+        walker: ignore::Walk,
         glob: Option<&str>,
         file_type: Option<&str>,
         head_limit: Option<usize>,
         deadline: Option<Instant>,
-    ) -> PyResult<Vec<CountResult>> {
+    ) -> Result<Vec<CountResult>, RGErr> {
         let mut counts = Vec::new();
-        let walker = self.build_walker(path, glob, file_type)?;
 
         for entry in walker {
-            // Check timeout in walker loop as requested
             if timed_out(deadline) {
-                return Err(PyTimeoutError::new_err("search timed out"));
+                return Err(RGErr::Timeout);
             }
 
             if let Some(limit) = head_limit {
@@ -309,7 +325,7 @@ impl Grep {
                 }
             }
 
-            let entry = entry.map_err(|e| PyValueError::new_err(format!("Walk error: {}", e)))?;
+            let entry = entry.map_err(RGErr::Walk)?;
 
             if !entry.file_type().map_or(false, |ft| ft.is_file()) {
                 continue;
@@ -329,7 +345,7 @@ impl Grep {
                 }
             }
 
-            let count = self.count_matches_in_file(matcher, entry.path())?;
+            let count = self.count_matches_in_file_inner(matcher, entry.path())?;
             if count > 0 {
                 counts.push(CountResult {
                     path: entry.path().to_string_lossy().to_string(),
@@ -377,7 +393,7 @@ impl Grep {
     /// Add file type filtering to walker
     fn add_file_type_filter(
         &self,
-        builder: &mut WalkBuilder,
+        _builder: &mut WalkBuilder,
         file_type: &str,
     ) -> PyResult<()> {
         // Simple file type mapping - extend as needed
@@ -441,17 +457,17 @@ impl Grep {
         match Glob::new(pattern) {
             Ok(glob) => {
                 let matcher = glob.compile_matcher();
-                
+
                 // Try matching against the full path
                 if matcher.is_match(path) {
                     return true;
                 }
-                
+
                 // Try matching against just the filename
                 if let Some(filename) = path.file_name() {
                     return matcher.is_match(filename);
                 }
-                
+
                 false
             }
             Err(_) => false, // Invalid pattern
@@ -459,30 +475,27 @@ impl Grep {
     }
 
     /// Search a single file for content with context
-    fn search_file_content(
+    fn search_file_content_inner(
         &self,
         matcher: &RegexMatcher,
-        path: &std::path::Path,
+        path: &Path,
         before_context: u64,
         after_context: u64,
         results: &mut Vec<ContentResult>,
-    ) -> PyResult<()> {
+    ) -> Result<(), RGErr> {
         use std::io::{BufRead, BufReader};
-        
-        let file = File::open(path)
-            .map_err(|e| PyValueError::new_err(format!("Cannot open file {}: {}", path.display(), e)))?;
+
+        let file = File::open(path).map_err(RGErr::Io)?;
 
         let path_str = path.to_string_lossy().to_string();
         let reader = BufReader::new(file);
         let lines: Result<Vec<String>, _> = reader.lines().collect();
-        
+
         let lines = match lines {
             Ok(lines) => lines,
             Err(_) => return Ok(()), // Skip problematic files silently
         };
 
-        let mut searcher = Searcher::new();
-        
         // Find all matching line numbers first
         let mut matching_lines = Vec::new();
         for (line_idx, line) in lines.iter().enumerate() {
@@ -495,14 +508,14 @@ impl Grep {
         // For each match, collect context and create result
         for &match_line in &matching_lines {
             let match_idx = (match_line - 1) as usize;
-            
+
             // Collect before context
             let before_start = if before_context == 0 {
                 match_idx
             } else {
                 match_idx.saturating_sub(before_context as usize)
             };
-            
+
             let mut before_ctx = Vec::new();
             if before_context > 0 {
                 for i in before_start..match_idx {
@@ -534,10 +547,8 @@ impl Grep {
     }
 
     /// Check if file has any matches
-    fn file_has_match(&self, matcher: &RegexMatcher, path: &std::path::Path) -> PyResult<bool> {
-        let file = File::open(path).map_err(|e| {
-            PyValueError::new_err(format!("Cannot open file {}: {}", path.display(), e))
-        })?;
+    fn file_has_match_inner(&self, matcher: &RegexMatcher, path: &Path) -> Result<bool, RGErr> {
+        let file = File::open(path).map_err(RGErr::Io)?;
 
         let mut searcher = Searcher::new();
         let mut has_match = false;
@@ -555,10 +566,8 @@ impl Grep {
     }
 
     /// Count matches in a file
-    fn count_matches_in_file(&self, matcher: &RegexMatcher, path: &std::path::Path) -> PyResult<u64> {
-        let file = File::open(path).map_err(|e| {
-            PyValueError::new_err(format!("Cannot open file {}: {}", path.display(), e))
-        })?;
+    fn count_matches_in_file_inner(&self, matcher: &RegexMatcher, path: &Path) -> Result<u64, RGErr> {
+        let file = File::open(path).map_err(RGErr::Io)?;
 
         let mut searcher = Searcher::new();
         let mut count = 0u64;

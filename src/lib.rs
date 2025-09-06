@@ -1,14 +1,13 @@
 use pyo3::exceptions::{PyValueError, PyTimeoutError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList, PyString};
 use std::path::{Path, PathBuf};
-use std::collections::HashSet;
-use ignore::WalkBuilder;
+use std::collections::{HashSet, HashMap};
+use ignore::{WalkBuilder, types::TypesBuilder, overrides::OverrideBuilder};
 use grep_searcher::{Searcher, sinks};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_matcher::Matcher;
 use std::fs::File;
-use globset::Glob;
 use std::time::{Duration, Instant};
 use std::io;
 
@@ -119,7 +118,7 @@ impl Grep {
         C: Option<u64>,           // -C: lines before and after match
         n: Option<bool>,          // -n: show line numbers
         i: Option<bool>,          // -i: case insensitive
-        r#type: Option<&str>,     // type: file type filter
+        r#type: Option<&PyAny>,   // type: file type filter (string or list)
         head_limit: Option<usize>,
         multiline: Option<bool>,
         timeout: Option<f64>,     // timeout in seconds
@@ -137,6 +136,9 @@ impl Grep {
             (B.unwrap_or(0), A.unwrap_or(0))
         };
 
+        // Parse types outside allow_threads (can raise Python exceptions here)
+        let parsed_types = Self::parse_types(r#type)?;
+
         // Build matcher
         let matcher = self.build_matcher(pattern, case_insensitive, multiline)?;
 
@@ -144,7 +146,7 @@ impl Grep {
         let deadline = deadline_from_secs(timeout);
 
         // Build walker outside allow_threads (can raise Python exceptions here)
-        let walker = self.build_walker(path, glob, r#type)?;
+        let walker = self.build_walker(path, glob, &parsed_types)?;
 
         // Search based on output mode (heavy part runs without the GIL)
         match output_mode {
@@ -153,8 +155,6 @@ impl Grep {
                     self.search_content_inner(
                         &matcher,
                         walker,
-                        glob,
-                        r#type,
                         before_ctx,
                         after_ctx,
                         deadline,
@@ -164,13 +164,13 @@ impl Grep {
             }
             OutputMode::FilesWithMatches => {
                 let files = py.allow_threads(|| {
-                    self.search_files_inner(&matcher, walker, glob, r#type, head_limit, deadline)
+                    self.search_files_inner(&matcher, walker, head_limit, deadline)
                 }).map_err(to_pyerr)?;
                 Ok(files.into_py(py))
             }
             OutputMode::Count => {
                 let counts = py.allow_threads(|| {
-                    self.search_count_inner(&matcher, walker, glob, r#type, head_limit, deadline)
+                    self.search_count_inner(&matcher, walker, head_limit, deadline)
                 }).map_err(to_pyerr)?;
                 Ok(self.format_count_results(py, counts)?)
             }
@@ -179,6 +179,71 @@ impl Grep {
 }
 
 impl Grep {
+    /// Create mapping from custom type names to official ripgrep type names
+    fn create_type_mapping() -> HashMap<&'static str, &'static str> {
+        let mut map = HashMap::new();
+        
+        // Map custom names to official ripgrep type names
+        map.insert("python", "py");
+        map.insert("javascript", "js");
+        map.insert("rust", "rust");  // already matches
+        map.insert("typescript", "ts");
+        map.insert("markdown", "md");
+        map.insert("c++", "cpp");
+        map.insert("ruby", "rb");
+        
+        // Official names map to themselves
+        map.insert("py", "py");
+        map.insert("js", "js");  
+        map.insert("ts", "ts");
+        map.insert("rs", "rust");  // rs -> rust for ripgrep
+        map.insert("cpp", "cpp");
+        map.insert("c", "c");
+        map.insert("go", "go");
+        map.insert("java", "java");
+        map.insert("php", "php");
+        map.insert("rb", "rb");
+        map.insert("md", "md");
+        map.insert("txt", "txt");
+        map.insert("json", "json");
+        map.insert("xml", "xml");
+        map.insert("yaml", "yaml");
+        map.insert("yml", "yaml");  // yml -> yaml for ripgrep
+        map.insert("toml", "toml");
+        
+        map
+    }
+    
+    /// Parse type parameter from Python (string or list) into official ripgrep type names
+    fn parse_types(type_param: Option<&PyAny>) -> PyResult<Vec<String>> {
+        let type_mapping = Self::create_type_mapping();
+        let mut result_types = Vec::new();
+        
+        if let Some(param) = type_param {
+            if let Ok(type_str) = param.extract::<&str>() {
+                // Single string type
+                if let Some(&official_name) = type_mapping.get(type_str) {
+                    result_types.push(official_name.to_string());
+                } else {
+                    return Err(PyValueError::new_err(format!("Unknown file type: {}", type_str)));
+                }
+            } else if let Ok(type_list) = param.extract::<Vec<&str>>() {
+                // List of types
+                for type_str in type_list {
+                    if let Some(&official_name) = type_mapping.get(type_str) {
+                        result_types.push(official_name.to_string());
+                    } else {
+                        return Err(PyValueError::new_err(format!("Unknown file type: {}", type_str)));
+                    }
+                }
+            } else {
+                return Err(PyValueError::new_err("Type parameter must be a string or list of strings"));
+            }
+        }
+        
+        Ok(result_types)
+    }
+
     /// Build regex matcher based on options
     fn build_matcher(
         &self,
@@ -206,8 +271,6 @@ impl Grep {
         &self,
         matcher: &RegexMatcher,
         walker: ignore::Walk,
-        glob: Option<&str>,
-        file_type: Option<&str>,
         before_context: u64,
         after_context: u64,
         deadline: Option<Instant>,
@@ -225,19 +288,6 @@ impl Grep {
                 continue;
             }
 
-            // Apply file type filter
-            if let Some(ftype) = file_type {
-                if !self.matches_file_type(entry.path(), ftype) {
-                    continue;
-                }
-            }
-
-            // Apply glob filter
-            if let Some(glob_pattern) = glob {
-                if !self.matches_glob(entry.path(), glob_pattern) {
-                    continue;
-                }
-            }
 
             self.search_file_content_inner(
                 matcher,
@@ -256,8 +306,6 @@ impl Grep {
         &self,
         matcher: &RegexMatcher,
         walker: ignore::Walk,
-        glob: Option<&str>,
-        file_type: Option<&str>,
         head_limit: Option<usize>,
         deadline: Option<Instant>,
     ) -> Result<Vec<String>, RGErr> {
@@ -280,19 +328,6 @@ impl Grep {
                 continue;
             }
 
-            // Apply file type filter
-            if let Some(ftype) = file_type {
-                if !self.matches_file_type(entry.path(), ftype) {
-                    continue;
-                }
-            }
-
-            // Apply glob filter
-            if let Some(glob_pattern) = glob {
-                if !self.matches_glob(entry.path(), glob_pattern) {
-                    continue;
-                }
-            }
 
             if self.file_has_match_inner(matcher, entry.path())? {
                 files.insert(entry.path().to_string_lossy().to_string());
@@ -307,8 +342,6 @@ impl Grep {
         &self,
         matcher: &RegexMatcher,
         walker: ignore::Walk,
-        glob: Option<&str>,
-        file_type: Option<&str>,
         head_limit: Option<usize>,
         deadline: Option<Instant>,
     ) -> Result<Vec<CountResult>, RGErr> {
@@ -331,19 +364,6 @@ impl Grep {
                 continue;
             }
 
-            // Apply file type filter
-            if let Some(ftype) = file_type {
-                if !self.matches_file_type(entry.path(), ftype) {
-                    continue;
-                }
-            }
-
-            // Apply glob filter
-            if let Some(glob_pattern) = glob {
-                if !self.matches_glob(entry.path(), glob_pattern) {
-                    continue;
-                }
-            }
 
             let count = self.count_matches_in_file_inner(matcher, entry.path())?;
             if count > 0 {
@@ -362,7 +382,7 @@ impl Grep {
         &self,
         path: &str,
         glob: Option<&str>,
-        file_type: Option<&str>,
+        types: &[String],
     ) -> PyResult<ignore::Walk> {
         let path_buf = PathBuf::from(path);
         if !path_buf.exists() {
@@ -374,105 +394,39 @@ impl Grep {
             .hidden(false)
             .git_ignore(true)
             .git_global(true)
+            .git_exclude(true)
+            .follow_links(false)
             .parents(true)
-            .follow_links(false);
+            .ignore(true)
+            .standard_filters(true);
 
-        // Add glob pattern if provided
-        if let Some(glob_pattern) = glob {
-            builder.add_custom_ignore_filename(glob_pattern);
+        // File types (e.g., "rust", "py", ...)
+        if !types.is_empty() {
+            let mut tb = TypesBuilder::new();
+            tb.add_defaults();
+            for t in types {
+                tb.select(t);
+            }
+            let types_cfg = tb.build()
+                .map_err(|e| PyValueError::new_err(format!("Invalid file type configuration: {e}")))?;
+            builder.types(types_cfg);
         }
 
-        // Add file type filtering
-        if let Some(ftype) = file_type {
-            self.add_file_type_filter(&mut builder, ftype)?;
+        // Glob: include-only, then ignore-everything-else (order matters)
+        if let Some(pat) = glob {
+            let mut ob = OverrideBuilder::new(&path_buf);
+            ob.add(pat).map_err(|e| PyValueError::new_err(format!("Invalid glob: {e}")))?;
+            ob.add("!**").map_err(|e| PyValueError::new_err(format!("Invalid glob: {e}")))?;
+            let overrides = ob.build()
+                .map_err(|e| PyValueError::new_err(format!("Failed to build glob overrides: {e}")))?;
+            builder.overrides(overrides);
         }
 
         Ok(builder.build())
     }
 
-    /// Add file type filtering to walker
-    fn add_file_type_filter(
-        &self,
-        _builder: &mut WalkBuilder,
-        file_type: &str,
-    ) -> PyResult<()> {
-        // Simple file type mapping - extend as needed
-        let extensions = match file_type {
-            "rs" | "rust" => vec!["rs"],
-            "py" | "python" => vec!["py", "pyw", "pyi"],
-            "js" | "javascript" => vec!["js", "jsx"],
-            "ts" | "typescript" => vec!["ts", "tsx"],
-            "java" => vec!["java"],
-            "c" => vec!["c", "h"],
-            "cpp" | "c++" => vec!["cpp", "cxx", "cc", "hpp", "hxx"],
-            "go" => vec!["go"],
-            "rb" | "ruby" => vec!["rb"],
-            "php" => vec!["php"],
-            "md" | "markdown" => vec!["md", "markdown"],
-            "txt" | "text" => vec!["txt"],
-            "json" => vec!["json"],
-            "xml" => vec!["xml"],
-            "yaml" | "yml" => vec!["yaml", "yml"],
-            "toml" => vec!["toml"],
-            _ => return Err(PyValueError::new_err(format!("Unknown file type: {}", file_type))),
-        };
 
-        // Note: WalkBuilder doesn't have a direct extension filter,
-        // so we'll implement this in the search methods by checking extensions
-        Ok(())
-    }
 
-    /// Check if file matches the given file type
-    fn matches_file_type(&self, path: &std::path::Path, file_type: &str) -> bool {
-        let extensions = match file_type {
-            "rs" | "rust" => vec!["rs"],
-            "py" | "python" => vec!["py", "pyw", "pyi"],
-            "js" | "javascript" => vec!["js", "jsx"],
-            "ts" | "typescript" => vec!["ts", "tsx"],
-            "java" => vec!["java"],
-            "c" => vec!["c", "h"],
-            "cpp" | "c++" => vec!["cpp", "cxx", "cc", "hpp", "hxx"],
-            "go" => vec!["go"],
-            "rb" | "ruby" => vec!["rb"],
-            "php" => vec!["php"],
-            "md" | "markdown" => vec!["md", "markdown"],
-            "txt" | "text" => vec!["txt"],
-            "json" => vec!["json"],
-            "xml" => vec!["xml"],
-            "yaml" | "yml" => vec!["yaml", "yml"],
-            "toml" => vec!["toml"],
-            _ => return false,
-        };
-
-        if let Some(ext) = path.extension() {
-            if let Some(ext_str) = ext.to_str() {
-                return extensions.iter().any(|&e| e == ext_str);
-            }
-        }
-        false
-    }
-
-    /// Check if file matches the given glob pattern
-    fn matches_glob(&self, path: &std::path::Path, pattern: &str) -> bool {
-        match Glob::new(pattern) {
-            Ok(glob) => {
-                let matcher = glob.compile_matcher();
-
-                // Try matching against the full path
-                if matcher.is_match(path) {
-                    return true;
-                }
-
-                // Try matching against just the filename
-                if let Some(filename) = path.file_name() {
-                    return matcher.is_match(filename);
-                }
-
-                false
-            }
-            Err(_) => false, // Invalid pattern
-        }
-    }
 
     /// Search a single file for content with context
     fn search_file_content_inner(

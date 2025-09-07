@@ -480,16 +480,15 @@ line7: after context"""
         
         # glob="*.py" should only match .py files in the root directory, not subdirectories
         # So filtered_files should be a subset of python_files
-        assert len(filtered_files) <= len(python_files), f"Glob+type should be subset of type alone: {filtered_files} vs {python_files}"
+        assert len(filtered_files) == len(python_files), f"Glob+type should be match type alone: {filtered_files} vs {python_files}"
         assert all(f in python_files for f in filtered_files), "All filtered files should be in python_files"
         
-        # The glob *.py should exclude src/utils.py, so filtered_files should not contain it
         filtered_basenames = [os.path.basename(f) for f in filtered_files]
         assert "main.py" in filtered_basenames, "Should find main.py"
         
-        # Test with a glob that matches subdirectories too
+        # Test with a glob that matches subdirectories
         all_py_files = grep.search(output_mode="files", path=self.tmpdir, glob="**/*.py", type="python")
-        assert len(all_py_files) >= len(python_files), "Recursive glob should find at least as many files as type alone"
+        assert len(all_py_files) == len(python_files), "Recursive glob should find exactly as many files as type alone"
         
         # Test 5: Files mode with head_limit
         limited_files = grep.search(output_mode="files", path=self.tmpdir, head_limit=3)

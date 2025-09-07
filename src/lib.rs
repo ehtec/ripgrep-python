@@ -146,7 +146,7 @@ impl Grep {
         let deadline = deadline_from_secs(timeout);
 
         // Build walker outside allow_threads (can raise Python exceptions here)
-        let walker = self.build_walker(path, glob, &parsed_types)?;
+        let (walker, type_matcher) = self.build_walker(path, glob, &parsed_types)?;
 
         // Search based on output mode (heavy part runs without the GIL)
         match output_mode {
@@ -155,6 +155,7 @@ impl Grep {
                     self.search_content_inner(
                         &matcher,
                         walker,
+                        type_matcher.as_ref(),
                         before_ctx,
                         after_ctx,
                         deadline,
@@ -164,13 +165,13 @@ impl Grep {
             }
             OutputMode::FilesWithMatches => {
                 let files = py.allow_threads(|| {
-                    self.search_files_inner(&matcher, walker, head_limit, deadline)
+                    self.search_files_inner(&matcher, walker, type_matcher.as_ref(), head_limit, deadline)
                 }).map_err(to_pyerr)?;
                 Ok(files.into_py(py))
             }
             OutputMode::Count => {
                 let counts = py.allow_threads(|| {
-                    self.search_count_inner(&matcher, walker, head_limit, deadline)
+                    self.search_count_inner(&matcher, walker, type_matcher.as_ref(), head_limit, deadline)
                 }).map_err(to_pyerr)?;
                 Ok(self.format_count_results(py, counts)?)
             }
@@ -271,6 +272,7 @@ impl Grep {
         &self,
         matcher: &RegexMatcher,
         walker: ignore::Walk,
+        type_matcher: Option<&ignore::types::Types>,
         before_context: u64,
         after_context: u64,
         deadline: Option<Instant>,
@@ -288,6 +290,12 @@ impl Grep {
                 continue;
             }
 
+            // Apply type filter manually for AND logic with glob
+            if let Some(type_matcher) = type_matcher {
+                if !type_matcher.matched(entry.path(), false).is_whitelist() {
+                    continue;
+                }
+            }
 
             self.search_file_content_inner(
                 matcher,
@@ -306,6 +314,7 @@ impl Grep {
         &self,
         matcher: &RegexMatcher,
         walker: ignore::Walk,
+        type_matcher: Option<&ignore::types::Types>,
         head_limit: Option<usize>,
         deadline: Option<Instant>,
     ) -> Result<Vec<String>, RGErr> {
@@ -328,6 +337,12 @@ impl Grep {
                 continue;
             }
 
+            // Apply type filter manually for AND logic with glob
+            if let Some(type_matcher) = type_matcher {
+                if !type_matcher.matched(entry.path(), false).is_whitelist() {
+                    continue;
+                }
+            }
 
             if self.file_has_match_inner(matcher, entry.path())? {
                 files.insert(entry.path().to_string_lossy().to_string());
@@ -342,6 +357,7 @@ impl Grep {
         &self,
         matcher: &RegexMatcher,
         walker: ignore::Walk,
+        type_matcher: Option<&ignore::types::Types>,
         head_limit: Option<usize>,
         deadline: Option<Instant>,
     ) -> Result<Vec<CountResult>, RGErr> {
@@ -364,6 +380,12 @@ impl Grep {
                 continue;
             }
 
+            // Apply type filter manually for AND logic with glob
+            if let Some(type_matcher) = type_matcher {
+                if !type_matcher.matched(entry.path(), false).is_whitelist() {
+                    continue;
+                }
+            }
 
             let count = self.count_matches_in_file_inner(matcher, entry.path())?;
             if count > 0 {
@@ -383,7 +405,7 @@ impl Grep {
         path: &str,
         glob: Option<&str>,
         types: &[String],
-    ) -> PyResult<ignore::Walk> {
+    ) -> PyResult<(ignore::Walk, Option<ignore::types::Types>)> {
         let path_buf = PathBuf::from(path);
         if !path_buf.exists() {
             return Err(PyValueError::new_err(format!("Path not found: {}", path)));
@@ -400,19 +422,20 @@ impl Grep {
             .ignore(true)
             .standard_filters(true);
 
-        // File types (e.g., "rust", "py", ...)
-        if !types.is_empty() {
+        // Build type matcher separately for manual checking (AND logic)
+        let type_matcher = if !types.is_empty() {
             let mut tb = TypesBuilder::new();
             tb.add_defaults();
             for t in types {
                 tb.select(t);
             }
-            let types_cfg = tb.build()
-                .map_err(|e| PyValueError::new_err(format!("Invalid file type configuration: {e}")))?;
-            builder.types(types_cfg);
-        }
+            Some(tb.build()
+                .map_err(|e| PyValueError::new_err(format!("Invalid file type configuration: {e}")))?)
+        } else {
+            None
+        };
 
-        // Glob: include-only, then ignore-everything-else (order matters)
+        // Use overrides for glob filtering (fast pruning during traversal)
         if let Some(pat) = glob {
             let mut ob = OverrideBuilder::new(&path_buf);
             ob.add("!**").map_err(|e| PyValueError::new_err(format!("Invalid glob: {e}")))?;
@@ -422,7 +445,7 @@ impl Grep {
             builder.overrides(overrides);
         }
 
-        Ok(builder.build())
+        Ok((builder.build(), type_matcher))
     }
 
 

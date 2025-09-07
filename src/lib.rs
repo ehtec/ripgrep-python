@@ -1,6 +1,6 @@
 use pyo3::exceptions::{PyValueError, PyTimeoutError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyString};
+use pyo3::types::PyDict;
 use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
 use ignore::{WalkBuilder, types::TypesBuilder, overrides::OverrideBuilder};
@@ -94,7 +94,7 @@ impl Grep {
     /// Main search method with ripgrep-like interface
     /// Supports the exact parameter names as required by the Grep tool specification
     #[pyo3(signature = (
-        pattern,
+        pattern = None,
         path = None,
         glob = None,
         output_mode = None,
@@ -111,7 +111,7 @@ impl Grep {
     fn search(
         &self,
         py: Python,
-        pattern: &str,
+        pattern: Option<&str>,
         path: Option<&str>,
         glob: Option<&str>,
         output_mode: Option<&str>,
@@ -679,7 +679,7 @@ impl Grep {
             let mut current_lines: BTreeMap<u64, (String, bool)> = BTreeMap::new();
 
             // helper to finalize a range
-            let mut finalize_range = |start: u64,
+            let finalize_range = |start: u64,
                                       end: u64,
                                       lines: BTreeMap<u64, (String, bool)>,
                                       out: &mut Vec<(u64, u64, Vec<(u64, String, bool)>)>| {

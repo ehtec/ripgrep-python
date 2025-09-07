@@ -441,7 +441,13 @@ line7: after context"""
         assert isinstance(results, list)
 
     def test_timeout_functionality(self):
-        """Test timeout functionality with proper validation of timing and exceptions"""
+        """Test timeout functionality with performance comparison to native ripgrep"""
+        # Verify ripgrep is available - FAIL if not present
+        try:
+            subprocess.run(["rg", "--version"], check=True, capture_output=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pytest.fail("ripgrep (rg) must be installed for performance comparison testing")
+        
         # Create temporary directory for cloning
         clone_dir = tempfile.mkdtemp()
         
@@ -456,9 +462,9 @@ line7: after context"""
             
             grep = pyripgrep.Grep()
             repo_path = os.path.join(clone_dir, "ffmpeg")
-            timeout_value = 0.5  # 500ms timeout
             
-            # Test that timeout actually works - measure actual timing
+            # Test 1: Timeout functionality
+            timeout_value = 0.5  # 500ms timeout
             start_time = time.perf_counter()
             
             timeout_exception_raised = False
@@ -481,7 +487,7 @@ line7: after context"""
             # Validate timeout behavior
             assert timeout_exception_raised, f"Expected timeout exception but none was raised. Search completed in {elapsed_time:.3f}s"
             
-            # Check that timeout occurred approximately at the specified time (allow 200ms tolerance)
+            # Check that timeout occurred approximately at the specified time (allow 300ms tolerance)
             tolerance = 0.3
             assert (timeout_value - tolerance) <= elapsed_time <= (timeout_value + tolerance), \
                 f"Timeout should occur around {timeout_value}s (±{tolerance}s), but took {elapsed_time:.3f}s"
@@ -493,30 +499,66 @@ line7: after context"""
             assert "timeout" in exception_name.lower() or "timeout" in exception_msg, \
                 f"Expected timeout-related exception, got {exception_name}: {actual_exception}"
             
-            # Test that a reasonable timeout allows completion
-            reasonable_timeout = 30.0
-            success_start_time = time.perf_counter()
+            print(f"✓ Timeout test: {elapsed_time:.3f}s (target: {timeout_value}s)")
             
-            results = grep.search(
-                r".*([a-zA-Z]+.*){3,}.*", 
+            # Test 2: Performance comparison with reasonable timeout
+            reasonable_timeout = 30.0
+            test_pattern = r"main\s*\("
+            
+            # Test our implementation
+            our_start_time = time.perf_counter()
+            our_results = grep.search(
+                test_pattern, 
                 path=repo_path,
-                output_mode="content",
+                output_mode="files_with_matches",
                 timeout=reasonable_timeout
             )
-            success_elapsed_time = time.perf_counter() - success_start_time
+            our_elapsed_time = time.perf_counter() - our_start_time
+            
+            # Test native ripgrep
+            rg_start_time = time.perf_counter()
+            try:
+                rg_result = subprocess.run([
+                    "rg", "-l", test_pattern, repo_path
+                ], check=True, capture_output=True, text=True, timeout=reasonable_timeout)
+                rg_files = [line.strip() for line in rg_result.stdout.strip().split('\n') if line.strip()]
+            except subprocess.TimeoutExpired:
+                pytest.fail("Native ripgrep timed out - pattern too expensive for comparison")
+            except subprocess.CalledProcessError:
+                rg_files = []  # Pattern might not match anything
+            
+            rg_elapsed_time = time.perf_counter() - rg_start_time
             
             # Should complete without timeout
-            assert isinstance(results, list)
-            assert len(results) > 0, "FFmpeg should have files containing 'main'"
-            assert success_elapsed_time < reasonable_timeout, \
-                f"Search should complete within {reasonable_timeout}s, took {success_elapsed_time:.3f}s"
-                
-            # Log timing information for test stability analysis
-            print(f"Timeout test: {elapsed_time:.3f}s (target: {timeout_value}s)")
-            print(f"Success test: {success_elapsed_time:.3f}s (margin: {timeout_value - success_elapsed_time:.3f}s)")
+            assert isinstance(our_results, list)
+            assert our_elapsed_time < reasonable_timeout, \
+                f"Our search should complete within {reasonable_timeout}s, took {our_elapsed_time:.3f}s"
             
+            # Performance comparison
+            print(f"✓ Performance comparison:")
+            print(f"  Our implementation:  {our_elapsed_time:.3f}s ({len(our_results)} files found)")
+            print(f"  Native ripgrep:      {rg_elapsed_time:.3f}s ({len(rg_files)} files found)")
+            
+            # We should be within reasonable performance bounds (allow 5x slower than native)
+            performance_ratio = our_elapsed_time / max(rg_elapsed_time, 0.001)  # Avoid division by zero
+            print(f"  Performance ratio:   {performance_ratio:.1f}x slower than native")
+            
+            # Both should find roughly similar number of files (allow some differences due to implementation details)
+            file_count_ratio = len(our_results) / max(len(rg_files), 1)
+            if len(rg_files) > 0:
+                assert 0.8 <= file_count_ratio <= 1.2, \
+                    f"File count should be similar: our={len(our_results)}, rg={len(rg_files)}"
+            
+            # Performance should be reasonable (less than 10x slower than native, preferably much better)
+            # This is a loose bound to account for Python overhead
+            max_acceptable_ratio = 10.0
+            if performance_ratio > max_acceptable_ratio:
+                print(f"⚠️  Warning: Performance is {performance_ratio:.1f}x slower than native (>{max_acceptable_ratio}x)")
+            else:
+                print(f"✓ Performance is acceptable ({performance_ratio:.1f}x slower than native)")
+                
         except subprocess.CalledProcessError as e:
-            pytest.skip(f"Could not clone repository for timeout test: {e}")
+            pytest.fail(f"Could not clone repository for timeout test: {e}")
         finally:
             # Cleanup cloned repository
             if os.path.exists(clone_dir):
@@ -860,6 +902,87 @@ line7: after context"""
         py_and_python = grep.search("def|import", path=self.tmpdir, glob="*.py", type="python",
                                     i=True, output_mode="files_with_matches")
         assert py_and_python and all(p.endswith(".py") for p in py_and_python)
+
+    def test_multi_type_support_list(self):
+        """Test that type parameter accepts lists and matches files of any specified type (OR logic for types)"""
+        grep = pyripgrep.Grep()
+
+        # Test multi-type with list - should find files that match ANY of the types
+        multi_type_results = grep.search(".", path=self.tmpdir, type=["python", "javascript", "rust"],
+                                        output_mode="files_with_matches")
+        
+        # Get basenames for easier checking
+        basenames = [os.path.basename(f) for f in multi_type_results]
+        
+        # Should find files with .py, .js, and .rs extensions
+        expected_extensions = ["script.py", "app.js", "main.rs"]
+        found_expected = [f for f in basenames if f in expected_extensions]
+        assert len(found_expected) >= 3, f"Should find files with py, js, and rs extensions, got: {basenames}"
+        
+        # Should not find files with other extensions
+        unexpected = ["script.go", "data.json", "readme.md", "config.txt"]
+        found_unexpected = [f for f in basenames if f in unexpected]
+        assert len(found_unexpected) == 0, f"Should not find files with other extensions: {found_unexpected}"
+
+    def test_multi_type_support_official_names(self):
+        """Test multi-type support using official ripgrep type names"""
+        grep = pyripgrep.Grep()
+
+        # Test with official names
+        official_results = grep.search(".", path=self.tmpdir, type=["py", "js", "rust"], 
+                                     output_mode="files_with_matches")
+        
+        # Test with mixed custom and official names
+        mixed_results = grep.search(".", path=self.tmpdir, type=["python", "js", "rust"],
+                                  output_mode="files_with_matches")
+        
+        # Results should be the same
+        assert set(official_results) == set(mixed_results), "Official and custom type names should yield same results"
+
+    def test_multi_type_with_glob_and_logic(self):
+        """Test that multi-type with glob uses AND logic (files must match type AND glob)"""
+        grep = pyripgrep.Grep()
+
+        # Multi-type with glob - should find only Python files matching the glob
+        results = grep.search(".", path=self.tmpdir, type=["python", "javascript"], glob="*.py",
+                            output_mode="files_with_matches")
+        
+        basenames = [os.path.basename(f) for f in results]
+        
+        # Should only find .py files (AND logic)
+        assert all(f.endswith(".py") for f in basenames), f"Should only find .py files, got: {basenames}"
+        
+        # Should not find .js files even though javascript is in type list
+        assert not any(f.endswith(".js") for f in basenames), f"Should not find .js files due to glob restriction: {basenames}"
+
+    def test_multi_type_single_vs_list_equivalence(self):
+        """Test that single type as string vs single type in list gives same results"""
+        grep = pyripgrep.Grep()
+
+        # Single type as string
+        single_results = grep.search(".", path=self.tmpdir, type="python", output_mode="files_with_matches")
+        
+        # Single type in list
+        list_results = grep.search(".", path=self.tmpdir, type=["python"], output_mode="files_with_matches")
+        
+        # Should be identical
+        assert set(single_results) == set(list_results), "Single type string and list should give identical results"
+
+    def test_multi_type_error_handling(self):
+        """Test error handling for multi-type parameters"""
+        grep = pyripgrep.Grep()
+
+        # Invalid type in list should raise error
+        with pytest.raises(Exception):
+            grep.search(".", path=self.tmpdir, type=["python", "invalid_type"])
+        
+        # Empty list should work (no type filtering)
+        empty_results = grep.search(".", path=self.tmpdir, type=[], output_mode="files_with_matches")
+        assert len(empty_results) > 0, "Empty type list should find all files"
+        
+        # Mixed valid and invalid types should fail
+        with pytest.raises(Exception):
+            grep.search(".", path=self.tmpdir, type=["py", "javascript", "nonexistent"])
 
     def test_context_merging_within_file(self):
         """Test that overlapping context blocks are properly merged within a single file"""

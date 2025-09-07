@@ -440,7 +440,7 @@ line7: after context"""
         assert search_time < 5.0
         assert isinstance(results, list)
 
-    def test_timeout_functionality(self):
+    def test_timeout_functionality(self, request):
         """Test timeout functionality with performance comparison to native ripgrep"""
         # Verify ripgrep is available - FAIL if not present
         try:
@@ -499,8 +499,6 @@ line7: after context"""
             assert "timeout" in exception_name.lower() or "timeout" in exception_msg, \
                 f"Expected timeout-related exception, got {exception_name}: {actual_exception}"
             
-            print(f"✓ Timeout test: {elapsed_time:.3f}s (target: {timeout_value}s)")
-            
             # Test 2: Performance comparison with reasonable timeout
             reasonable_timeout = 30.0
             test_pattern = r"main\s*\("
@@ -534,14 +532,13 @@ line7: after context"""
             assert our_elapsed_time < reasonable_timeout, \
                 f"Our search should complete within {reasonable_timeout}s, took {our_elapsed_time:.3f}s"
             
-            # Performance comparison
-            print(f"✓ Performance comparison:")
-            print(f"  Our implementation:  {our_elapsed_time:.3f}s ({len(our_results)} files found)")
-            print(f"  Native ripgrep:      {rg_elapsed_time:.3f}s ({len(rg_files)} files found)")
-            
-            # We should be within reasonable performance bounds (allow 5x slower than native)
+            # Performance comparison using pytest terminal reporter
             performance_ratio = our_elapsed_time / max(rg_elapsed_time, 0.001)  # Avoid division by zero
-            print(f"  Performance ratio:   {performance_ratio:.1f}x slower than native")
+            
+            # Use terminal reporter to show timing info
+            tr = request.config.pluginmanager.get_plugin("terminalreporter")
+            if tr:
+                tr.write_line(f"[PERF] Our: {our_elapsed_time:.3f}s ({len(our_results)} files) | Native: {rg_elapsed_time:.3f}s ({len(rg_files)} files) | Ratio: {performance_ratio:.1f}x")
             
             # Both should find roughly similar number of files (allow some differences due to implementation details)
             file_count_ratio = len(our_results) / max(len(rg_files), 1)
@@ -550,12 +547,9 @@ line7: after context"""
                     f"File count should be similar: our={len(our_results)}, rg={len(rg_files)}"
             
             # Performance should be reasonable (less than 10x slower than native, preferably much better)
-            # This is a loose bound to account for Python overhead
             max_acceptable_ratio = 10.0
-            if performance_ratio > max_acceptable_ratio:
-                print(f"⚠️  Warning: Performance is {performance_ratio:.1f}x slower than native (>{max_acceptable_ratio}x)")
-            else:
-                print(f"✓ Performance is acceptable ({performance_ratio:.1f}x slower than native)")
+            assert performance_ratio <= max_acceptable_ratio, \
+                f"Performance ratio {performance_ratio:.1f}x exceeds limit {max_acceptable_ratio}x"
                 
         except subprocess.CalledProcessError as e:
             pytest.fail(f"Could not clone repository for timeout test: {e}")
@@ -915,7 +909,7 @@ line7: after context"""
         basenames = [os.path.basename(f) for f in multi_type_results]
         
         # Should find files with .py, .js, and .rs extensions
-        expected_extensions = ["script.py", "app.js", "main.rs"]
+        expected_extensions = ["main.py", "app.js", "lib.rs"]  # Fixed to match actual file names
         found_expected = [f for f in basenames if f in expected_extensions]
         assert len(found_expected) >= 3, f"Should find files with py, js, and rs extensions, got: {basenames}"
         

@@ -501,7 +501,8 @@ line7: after context"""
 
             # Test 2: Performance comparison with reasonable timeout
             reasonable_timeout = 30.0
-            test_pattern = r"main\s*\("
+            # test_pattern = r"main\s*\("
+            test_pattern = r"(?i)(?:av|ff|codec|filter|frame|packet|context|decode|encode|init|close)[_a-z0-9]{2,}"
 
             # Test our implementation
             our_start_time = time.perf_counter()

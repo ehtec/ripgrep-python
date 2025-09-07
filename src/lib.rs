@@ -413,7 +413,7 @@ impl Grep {
 
         let mut builder = WalkBuilder::new(&path_buf);
         builder
-            .hidden(false)
+            .hidden(true)
             .git_ignore(true)
             .git_global(true)
             .git_exclude(true)

@@ -501,7 +501,7 @@ impl Grep {
         // Use overrides for glob filtering (fast pruning during traversal)
         if let Some(pat) = glob {
             let mut ob = OverrideBuilder::new(&path_buf);
-            ob.add("!**").map_err(|e| PyValueError::new_err(format!("Invalid glob: {e}")))?;
+            ob.add("!**/*").map_err(|e| PyValueError::new_err(format!("Invalid glob: {e}")))?;
             ob.add(pat).map_err(|e| PyValueError::new_err(format!("Invalid glob: {e}")))?;
             let overrides = ob.build()
                 .map_err(|e| PyValueError::new_err(format!("Failed to build glob overrides: {e}")))?;

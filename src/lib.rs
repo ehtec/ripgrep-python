@@ -319,6 +319,7 @@ impl Grep {
         deadline: Option<Instant>,
     ) -> Result<Vec<String>, RGErr> {
         let mut files = HashSet::new();
+        let mut searcher = Searcher::new(); // Create once, reuse for all files
 
         for entry in walker {
             if timed_out(deadline) {
@@ -344,7 +345,7 @@ impl Grep {
                 }
             }
 
-            if self.file_has_match_inner(matcher, entry.path())? {
+            if self.file_has_match_inner_with_searcher(&mut searcher, matcher, entry.path())? {
                 files.insert(entry.path().to_string_lossy().to_string());
             }
         }
@@ -362,6 +363,7 @@ impl Grep {
         deadline: Option<Instant>,
     ) -> Result<Vec<CountResult>, RGErr> {
         let mut counts = Vec::new();
+        let mut searcher = Searcher::new(); // Create once, reuse for all files
 
         for entry in walker {
             if timed_out(deadline) {
@@ -387,7 +389,7 @@ impl Grep {
                 }
             }
 
-            let count = self.count_matches_in_file_inner(matcher, entry.path())?;
+            let count = self.count_matches_in_file_inner_with_searcher(&mut searcher, matcher, entry.path())?;
             if count > 0 {
                 counts.push(CountResult {
                     path: entry.path().to_string_lossy().to_string(),
@@ -523,11 +525,10 @@ impl Grep {
         Ok(())
     }
 
-    /// Check if file has any matches
-    fn file_has_match_inner(&self, matcher: &RegexMatcher, path: &Path) -> Result<bool, RGErr> {
+    /// Check if file has any matches with reused searcher
+    fn file_has_match_inner_with_searcher(&self, searcher: &mut Searcher, matcher: &RegexMatcher, path: &Path) -> Result<bool, RGErr> {
         let file = File::open(path).map_err(RGErr::Io)?;
 
-        let mut searcher = Searcher::new();
         let mut has_match = false;
 
         let result = searcher.search_file(matcher, &file, sinks::UTF8(|_lnum, _line| {
@@ -542,11 +543,16 @@ impl Grep {
         }
     }
 
-    /// Count matches in a file
-    fn count_matches_in_file_inner(&self, matcher: &RegexMatcher, path: &Path) -> Result<u64, RGErr> {
+    /// Check if file has any matches
+    fn file_has_match_inner(&self, matcher: &RegexMatcher, path: &Path) -> Result<bool, RGErr> {
+        let mut searcher = Searcher::new();
+        self.file_has_match_inner_with_searcher(&mut searcher, matcher, path)
+    }
+
+    /// Count matches in a file with reused searcher
+    fn count_matches_in_file_inner_with_searcher(&self, searcher: &mut Searcher, matcher: &RegexMatcher, path: &Path) -> Result<u64, RGErr> {
         let file = File::open(path).map_err(RGErr::Io)?;
 
-        let mut searcher = Searcher::new();
         let mut count = 0u64;
 
         let result = searcher.search_file(matcher, &file, sinks::UTF8(|_lnum, _line| {
@@ -558,6 +564,12 @@ impl Grep {
             Ok(_) => Ok(count),
             Err(_) => Ok(0), // Skip problematic files
         }
+    }
+
+    /// Count matches in a file
+    fn count_matches_in_file_inner(&self, matcher: &RegexMatcher, path: &Path) -> Result<u64, RGErr> {
+        let mut searcher = Searcher::new();
+        self.count_matches_in_file_inner_with_searcher(&mut searcher, matcher, path)
     }
 
     /// Format content results for Python to match ripgrep CLI output

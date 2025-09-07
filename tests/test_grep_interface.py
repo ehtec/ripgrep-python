@@ -507,7 +507,10 @@ line7: after context"""
                 r"(?i)(?:av|ff|codec|filter|frame|packet|context|decode|encode|init|close)[_a-z0-9]{2,}",
                 r"^[ \t]*(?:[A-Za-z_][\w\*\t ]{1,18}){2,}[A-Za-z_]\w*\s*\([^;{]{10,}\)\s*\{",
                 r"^[ \t]*(?:[A-Za-z_][\w\*\t ]{1,20}){3,}[A-Za-z_]\w*\s*\([^;{]{30,}\)\s*\{",
-                r"(?u)^[ \t]*(?:\p{XID_Start}[\p{XID_Continue}\*\t ]{0,24}){3,}\p{XID_Start}\p{XID_Continue}*\s*\(\s*(?:\p{XID_Start}\p{XID_Continue}*[\*\t ]*(?:\[[^\]]*\])?\s*(?:,\s*\p{XID_Start}\p{XID_Continue}*[\*\t ]*(?:\[[^\]]*\])?\s*){8,})\)\s*\{"
+                r"(?u)^[ \t]*(?:\p{XID_Start}[\p{XID_Continue}\*\t ]{0,24}){3,}\p{XID_Start}\p{XID_Continue}*\s*\(\s*(?:\p{XID_Start}\p{XID_Continue}*[\*\t ]*(?:\[[^\]]*\])?\s*(?:,\s*\p{XID_Start}\p{XID_Continue}*[\*\t ]*(?:\[[^\]]*\])?\s*){8,})\)\s*\{",
+                r"^[ \t]*(?:[A-Za-z_][\w\*\t ]{1,24}){3,}\(\s*\*\s*[A-Za-z_]\w*\s*\)\s*\([^()\n,]+(?:\s*,\s*[^()\n,]+){2,}\)\s*;",
+                r"^[ \t]*(?:[A-Za-z_][\w\*\t ]{1,28}){4,}\(\s*\*\s*[A-Za-z_]\w*\s*\)\s*\([^()\n,]+(?:\s*,\s*[^()\n,]+){3,}\)\s*;",
+                r"^[ \t]*(?:[A-Za-z_][\w\*\t ]{1,20}){2,}\(\s*\*\s*[A-Za-z_]\w*\s*\)\s*\([^()\n,]+(?:\s*,\s*[^()\n,]+){1,}\)\s*;"
             ]
 
             for test_pattern in test_patterns:

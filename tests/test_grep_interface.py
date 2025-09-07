@@ -833,6 +833,34 @@ line7: after context"""
         found_unexpected = [f for f in basenames if f in unexpected]
         assert len(found_unexpected) == 0, f"Should not find unexpected files: {found_unexpected}"
 
+    def test_glob_and_type_are_intersection(self):
+        """glob and type must combine with AND semantics"""
+        grep = pyripgrep.Grep()
+
+        # Compute sets separately
+        only_glob = set(grep.search(".", path=self.tmpdir, glob="*.py",
+                                    output_mode="files_with_matches"))
+        only_type = set(grep.search(".", path=self.tmpdir, type="python",
+                                    output_mode="files_with_matches"))
+        both = set(grep.search(".", path=self.tmpdir, glob="*.py", type="python",
+                               output_mode="files_with_matches"))
+
+        # Invariant: BOTH == intersection(only_glob, only_type)
+        assert both == (only_glob & only_type), f"Expected AND semantics; got {both=} vs {(only_glob & only_type)=}"
+
+        # Negative sanity checks (conflicting filters => empty)
+        js_and_python = grep.search(".", path=self.tmpdir, glob="*.js", type="python",
+                                    output_mode="files_with_matches")
+        py_and_rust = grep.search(".", path=self.tmpdir, glob="*.py", type="rust",
+                                  output_mode="files_with_matches")
+        assert js_and_python == [], "glob=*.js AND type=python should yield no files"
+        assert py_and_rust == [], "glob=*.py AND type=rust should yield no files"
+
+        # Positive sanity check (both narrow to .py & python)
+        py_and_python = grep.search("def|import", path=self.tmpdir, glob="*.py", type="python",
+                                    i=True, output_mode="files_with_matches")
+        assert py_and_python and all(p.endswith(".py") for p in py_and_python)
+
     def test_context_merging_within_file(self):
         """Test that overlapping context blocks are properly merged within a single file"""
         grep = pyripgrep.Grep()

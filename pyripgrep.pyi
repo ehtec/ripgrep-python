@@ -22,7 +22,7 @@ class Grep:
     @overload
     def search(
         self,
-        pattern: str,
+        pattern: Optional[str] = None,
         *,
         path: Optional[str] = None,
         glob: Optional[str] = None,
@@ -41,7 +41,7 @@ class Grep:
         Search for pattern and return list of files containing matches.
 
         Args:
-            pattern: Regular expression pattern to search for
+            pattern: Regular expression pattern to search for (required for this mode)
             path: Directory or file path to search (default: current directory)
             glob: Glob pattern for file filtering (e.g., "*.py")
             output_mode: Output mode - "files_with_matches" returns file paths
@@ -63,7 +63,7 @@ class Grep:
     @overload
     def search(
         self,
-        pattern: str,
+        pattern: Optional[str] = None,
         *,
         path: Optional[str] = None,
         glob: Optional[str] = None,
@@ -82,7 +82,7 @@ class Grep:
         Search for pattern and return matching lines with context.
 
         Args:
-            pattern: Regular expression pattern to search for
+            pattern: Regular expression pattern to search for (required for this mode)
             path: Directory or file path to search (default: current directory)
             glob: Glob pattern for file filtering (e.g., "*.py")
             output_mode: Output mode - "content" returns matching lines
@@ -105,7 +105,7 @@ class Grep:
     @overload
     def search(
         self,
-        pattern: str,
+        pattern: Optional[str] = None,
         *,
         path: Optional[str] = None,
         glob: Optional[str] = None,
@@ -124,7 +124,7 @@ class Grep:
         Search for pattern and return match counts per file.
 
         Args:
-            pattern: Regular expression pattern to search for
+            pattern: Regular expression pattern to search for (required for this mode)
             path: Directory or file path to search (default: current directory)
             glob: Glob pattern for file filtering (e.g., "*.py")
             output_mode: Output mode - "count" returns match counts
@@ -140,5 +140,46 @@ class Grep:
 
         Returns:
             Dictionary mapping file paths to number of matches in each file
+        """
+        ...
+
+    @overload
+    def search(
+        self,
+        pattern: Optional[str] = None,
+        *,
+        path: Optional[str] = None,
+        glob: Optional[str] = None,
+        output_mode: Literal["files"],
+        B: Optional[int] = None,
+        A: Optional[int] = None,
+        C: Optional[int] = None,
+        n: Optional[bool] = None,
+        i: Optional[bool] = None,
+        type: Optional[Union[str, List[str]]] = None,
+        head_limit: Optional[int] = None,
+        multiline: Optional[bool] = None,
+        timeout: Optional[float] = None,
+    ) -> List[str]:
+        """
+        List all files that would be searched (like rg --files).
+
+        Args:
+            pattern: Pattern is ignored in files mode (optional)
+            path: Directory or file path to search (default: current directory)
+            glob: Glob pattern for file filtering (e.g., "*.py")
+            output_mode: Output mode - "files" returns all searchable file paths
+            B: Number of lines before each match (ignored in files mode)
+            A: Number of lines after each match (ignored in files mode)
+            C: Number of lines before and after each match (ignored in files mode)
+            n: Show line numbers (ignored in files mode)
+            i: Case insensitive search (ignored in files mode)
+            type: File type filter (e.g., "rust", "python", ["python", "javascript"])
+            head_limit: Maximum number of results to return
+            multiline: Enable multiline mode (ignored in files mode)
+            timeout: Timeout in seconds for the search operation
+
+        Returns:
+            List of file paths that match the glob and type filters
         """
         ...

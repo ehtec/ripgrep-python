@@ -1122,9 +1122,12 @@ line7: after context"""
         # Test 8: Content mode with glob filter - only files in tests/
         test_content = grep.search("def test", path=nested_test_dir, output_mode="content", glob="tests/**/*.py", n=True)
         assert isinstance(test_content, list)
-        assert len(test_content) == 2, f"Should find 2 test functions, got {len(test_content)}"
         
-        for line in test_content:
+        # Filter out separator lines for counting
+        content_lines = [line for line in test_content if line != "--"]
+        assert len(content_lines) == 2, f"Should find 2 test functions, got {len(content_lines)}: {test_content}"
+        
+        for line in content_lines:
             assert "tests/" in line, f"Should be from tests/ directory: {line}"
             assert "def test" in line, f"Should contain 'def test': {line}"
         

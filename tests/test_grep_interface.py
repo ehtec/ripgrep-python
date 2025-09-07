@@ -501,58 +501,63 @@ line7: after context"""
 
             # Test 2: Performance comparison with reasonable timeout
             reasonable_timeout = 30.0
-            # test_pattern = r"main\s*\("
-            # test_pattern = r"(?i)(?:av|ff|codec|filter|frame|packet|context|decode|encode|init|close)[_a-z0-9]{2,}"
-            test_pattern = r"^[ \t]*(?:[A-Za-z_][\w\*\t ]{1,18}){2,}[A-Za-z_]\w*\s*\([^;{]{10,}\)\s*\{"
 
-            # Test our implementation
-            our_start_time = time.perf_counter()
-            our_results = grep.search(
-                test_pattern,
-                path=repo_path,
-                output_mode="files_with_matches",
-                timeout=reasonable_timeout
-            )
-            our_elapsed_time = time.perf_counter() - our_start_time
+            test_patterns = [
+                r"main\s*\(",
+                r"(?i)(?:av|ff|codec|filter|frame|packet|context|decode|encode|init|close)[_a-z0-9]{2,}",
+                r"^[ \t]*(?:[A-Za-z_][\w\*\t ]{1,18}){2,}[A-Za-z_]\w*\s*\([^;{]{10,}\)\s*\{",
+                r"^[ \t]*(?:[A-Za-z_][\w\*\t ]{1,20}){3,}[A-Za-z_]\w*\s*\([^;{]{20,}\)\s*\{"
+            ]
 
-            # Test native ripgrep
-            rg_start_time = time.perf_counter()
-            try:
-                rg_result = subprocess.run([
-                    "rg", "-l", test_pattern, repo_path
-                ], check=True, capture_output=True, text=True, timeout=reasonable_timeout)
-                rg_files = [line.strip() for line in rg_result.stdout.strip().split('\n') if line.strip()]
-            except subprocess.TimeoutExpired:
-                pytest.fail("Native ripgrep timed out - pattern too expensive for comparison")
-            except subprocess.CalledProcessError:
-                rg_files = []  # Pattern might not match anything
+            for test_pattern in test_patterns:
+                # Test our implementation
+                our_start_time = time.perf_counter()
+                our_results = grep.search(
+                    test_pattern,
+                    path=repo_path,
+                    output_mode="files_with_matches",
+                    timeout=reasonable_timeout
+                )
+                our_elapsed_time = time.perf_counter() - our_start_time
 
-            rg_elapsed_time = time.perf_counter() - rg_start_time
+                # Test native ripgrep
+                rg_start_time = time.perf_counter()
+                try:
+                    rg_result = subprocess.run([
+                        "rg", "-l", test_pattern, repo_path
+                    ], check=True, capture_output=True, text=True, timeout=reasonable_timeout)
+                    rg_files = [line.strip() for line in rg_result.stdout.strip().split('\n') if line.strip()]
+                except subprocess.TimeoutExpired:
+                    pytest.fail("Native ripgrep timed out - pattern too expensive for comparison")
+                except subprocess.CalledProcessError:
+                    rg_files = []  # Pattern might not match anything
 
-            # Should complete without timeout
-            assert isinstance(our_results, list)
-            assert our_elapsed_time < reasonable_timeout, \
-                f"Our search should complete within {reasonable_timeout}s, took {our_elapsed_time:.3f}s"
+                rg_elapsed_time = time.perf_counter() - rg_start_time
 
-            # Performance comparison using pytest terminal reporter
-            performance_ratio = our_elapsed_time / max(rg_elapsed_time, 0.001)  # Avoid division by zero
+                # Should complete without timeout
+                assert isinstance(our_results, list)
+                assert our_elapsed_time < reasonable_timeout, \
+                    f"Our search should complete within {reasonable_timeout}s, took {our_elapsed_time:.3f}s"
 
-            # Use terminal reporter to show timing info
-            tr = request.config.pluginmanager.get_plugin("terminalreporter")
-            if tr:
-                tr.write_line(
-                    f"[PERF] Our: {our_elapsed_time:.3f}s ({len(our_results)} files) | Native: {rg_elapsed_time:.3f}s ({len(rg_files)} files) | Ratio: {performance_ratio:.1f}x")
+                # Performance comparison using pytest terminal reporter
+                performance_ratio = our_elapsed_time / max(rg_elapsed_time, 0.001)  # Avoid division by zero
 
-            # Both should find roughly similar number of files (allow some differences due to implementation details)
-            file_count_ratio = len(our_results) / max(len(rg_files), 1)
-            if len(rg_files) > 0:
-                assert 0.8 <= file_count_ratio <= 1.2, \
-                    f"File count should be similar: our={len(our_results)}, rg={len(rg_files)}"
+                # Use terminal reporter to show timing info
+                tr = request.config.pluginmanager.get_plugin("terminalreporter")
+                if tr:
+                    tr.write_line(
+                        f"[PERF] Our: {our_elapsed_time:.3f}s ({len(our_results)} files) | Native: {rg_elapsed_time:.3f}s ({len(rg_files)} files) | Ratio: {performance_ratio:.1f}x")
 
-            # Performance should be reasonable (less than 10x slower than native, preferably much better)
-            max_acceptable_ratio = 10.0
-            assert performance_ratio <= max_acceptable_ratio, \
-                f"Performance ratio {performance_ratio:.1f}x exceeds limit {max_acceptable_ratio}x"
+                # Both should find roughly similar number of files (allow some differences due to implementation details)
+                file_count_ratio = len(our_results) / max(len(rg_files), 1)
+                if len(rg_files) > 0:
+                    assert 0.8 <= file_count_ratio <= 1.2, \
+                        f"File count should be similar: our={len(our_results)}, rg={len(rg_files)}"
+
+                # Performance should be reasonable (less than 10x slower than native, preferably much better)
+                max_acceptable_ratio = 10.0
+                assert performance_ratio <= max_acceptable_ratio, \
+                    f"Performance ratio {performance_ratio:.1f}x exceeds limit {max_acceptable_ratio}x"
 
         except subprocess.CalledProcessError as e:
             pytest.fail(f"Could not clone repository for timeout test: {e}")

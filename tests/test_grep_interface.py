@@ -182,7 +182,7 @@ line4: TARGET LINE with ERROR
 line5: after context
 line6: after context
 line7: after context"""
-        
+
         with open(context_file, 'w') as f:
             f.write(context_content)
 
@@ -190,7 +190,7 @@ line7: after context"""
         results_a = grep.search("TARGET LINE", path=context_file, output_mode="content", A=2)
         assert isinstance(results_a, list)
         assert len(results_a) > 0
-        
+
         # Should contain the target line and 2 lines after
         content_a = '\n'.join(results_a)
         assert "TARGET LINE with ERROR" in content_a
@@ -203,7 +203,7 @@ line7: after context"""
         results_b = grep.search("TARGET LINE", path=context_file, output_mode="content", B=2)
         assert isinstance(results_b, list)
         assert len(results_b) > 0
-        
+
         # Should contain the target line and 2 lines before
         content_b = '\n'.join(results_b)
         assert "TARGET LINE with ERROR" in content_b
@@ -216,7 +216,7 @@ line7: after context"""
         results_c = grep.search("TARGET LINE", path=context_file, output_mode="content", C=2)
         assert isinstance(results_c, list)
         assert len(results_c) > 0
-        
+
         # Should contain the target line, 2 lines before, and 2 lines after
         content_c = '\n'.join(results_c)
         assert "TARGET LINE with ERROR" in content_c
@@ -399,7 +399,7 @@ line7: after context"""
         # Test invalid path
         with pytest.raises(ValueError):
             grep.search("test", path="/nonexistent/path/that/does/not/exist")
-            
+
         # Test invalid regex pattern
         with pytest.raises(ValueError):
             grep.search("[invalid regex", path=self.tmpdir)
@@ -447,33 +447,33 @@ line7: after context"""
             subprocess.run(["rg", "--version"], check=True, capture_output=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             pytest.fail("ripgrep (rg) must be installed for performance comparison testing")
-        
+
         # Create temporary directory for cloning
         clone_dir = tempfile.mkdtemp()
-        
+
         try:
             # Clone a medium-sized repository (using a shallow clone to be faster)
             print("Cloning repository for timeout test...")
             result = subprocess.run([
-                "git", "clone", "--depth=1", 
-                "https://github.com/FFmpeg/FFmpeg.git", 
+                "git", "clone", "--depth=1",
+                "https://github.com/FFmpeg/FFmpeg.git",
                 os.path.join(clone_dir, "ffmpeg")
             ], check=True, capture_output=True, text=True)
-            
+
             grep = pyripgrep.Grep()
             repo_path = os.path.join(clone_dir, "ffmpeg")
-            
+
             # Test 1: Timeout functionality
             timeout_value = 0.5  # 500ms timeout
             start_time = time.perf_counter()
-            
+
             timeout_exception_raised = False
             actual_exception = None
-            
+
             try:
                 # Search for a very expensive pattern that will definitely timeout
                 grep.search(
-                    r".*([a-zA-Z]+.*){3,}.*", 
+                    r".*([a-zA-Z]+.*){3,}.*",
                     path=repo_path,
                     output_mode="content",
                     timeout=timeout_value
@@ -481,38 +481,38 @@ line7: after context"""
             except TimeoutError as e:
                 timeout_exception_raised = True
                 actual_exception = e
-            
+
             elapsed_time = time.perf_counter() - start_time
-            
+
             # Validate timeout behavior
             assert timeout_exception_raised, f"Expected timeout exception but none was raised. Search completed in {elapsed_time:.3f}s"
-            
+
             # Check that timeout occurred approximately at the specified time (allow 300ms tolerance)
             tolerance = 0.3
             assert (timeout_value - tolerance) <= elapsed_time <= (timeout_value + tolerance), \
                 f"Timeout should occur around {timeout_value}s (±{tolerance}s), but took {elapsed_time:.3f}s"
-            
+
             # Check that it's the correct timeout exception type
             assert actual_exception is not None
             exception_name = type(actual_exception).__name__
             exception_msg = str(actual_exception).lower()
             assert "timeout" in exception_name.lower() or "timeout" in exception_msg, \
                 f"Expected timeout-related exception, got {exception_name}: {actual_exception}"
-            
+
             # Test 2: Performance comparison with reasonable timeout
             reasonable_timeout = 30.0
             test_pattern = r"main\s*\("
-            
+
             # Test our implementation
             our_start_time = time.perf_counter()
             our_results = grep.search(
-                test_pattern, 
+                test_pattern,
                 path=repo_path,
                 output_mode="files_with_matches",
                 timeout=reasonable_timeout
             )
             our_elapsed_time = time.perf_counter() - our_start_time
-            
+
             # Test native ripgrep
             rg_start_time = time.perf_counter()
             try:
@@ -524,33 +524,34 @@ line7: after context"""
                 pytest.fail("Native ripgrep timed out - pattern too expensive for comparison")
             except subprocess.CalledProcessError:
                 rg_files = []  # Pattern might not match anything
-            
+
             rg_elapsed_time = time.perf_counter() - rg_start_time
-            
+
             # Should complete without timeout
             assert isinstance(our_results, list)
             assert our_elapsed_time < reasonable_timeout, \
                 f"Our search should complete within {reasonable_timeout}s, took {our_elapsed_time:.3f}s"
-            
+
             # Performance comparison using pytest terminal reporter
             performance_ratio = our_elapsed_time / max(rg_elapsed_time, 0.001)  # Avoid division by zero
-            
+
             # Use terminal reporter to show timing info
             tr = request.config.pluginmanager.get_plugin("terminalreporter")
             if tr:
-                tr.write_line(f"[PERF] Our: {our_elapsed_time:.3f}s ({len(our_results)} files) | Native: {rg_elapsed_time:.3f}s ({len(rg_files)} files) | Ratio: {performance_ratio:.1f}x")
-            
+                tr.write_line(
+                    f"[PERF] Our: {our_elapsed_time:.3f}s ({len(our_results)} files) | Native: {rg_elapsed_time:.3f}s ({len(rg_files)} files) | Ratio: {performance_ratio:.1f}x")
+
             # Both should find roughly similar number of files (allow some differences due to implementation details)
             file_count_ratio = len(our_results) / max(len(rg_files), 1)
             if len(rg_files) > 0:
                 assert 0.8 <= file_count_ratio <= 1.2, \
                     f"File count should be similar: our={len(our_results)}, rg={len(rg_files)}"
-            
+
             # Performance should be reasonable (less than 10x slower than native, preferably much better)
             max_acceptable_ratio = 10.0
             assert performance_ratio <= max_acceptable_ratio, \
                 f"Performance ratio {performance_ratio:.1f}x exceeds limit {max_acceptable_ratio}x"
-                
+
         except subprocess.CalledProcessError as e:
             pytest.fail(f"Could not clone repository for timeout test: {e}")
         finally:
@@ -567,16 +568,16 @@ line7: after context"""
             "ERROR",
             path=self.tmpdir,
             output_mode="content",
-            i=True,           # case insensitive
-            n=True,           # line numbers
-            C=1,              # context lines
-            type="python",    # Python files only
-            head_limit=5      # limit results
+            i=True,  # case insensitive
+            n=True,  # line numbers
+            C=1,  # context lines
+            type="python",  # Python files only
+            head_limit=5  # limit results
         )
 
         assert isinstance(results, list)
         assert len(results) <= 5
-        
+
         # Filter out separator lines for the file type check
         content_lines = [line for line in results if line != "--"]
 
@@ -596,7 +597,8 @@ line7: after context"""
         default_results = grep.search("ERROR", path=self.tmpdir)
         explicit_results = grep.search("ERROR", path=self.tmpdir, output_mode="files_with_matches")
 
-        assert sorted(default_results) == sorted(explicit_results), f"Default {default_results} != Explicit {explicit_results}"
+        assert sorted(default_results) == sorted(
+            explicit_results), f"Default {default_results} != Explicit {explicit_results}"
 
         # Verify they are both lists
         assert isinstance(default_results, list), f"Expected list, got {type(default_results)}"
@@ -610,19 +612,19 @@ line7: after context"""
     def test_glob_pattern_basic_extensions(self):
         """Test basic glob pattern matching with extensions"""
         grep = pyripgrep.Grep()
-        
+
         # Test Python files only
         py_results = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="files_with_matches")
         assert isinstance(py_results, list)
         for filepath in py_results:
             assert filepath.endswith('.py'), f"Non-Python file found: {filepath}"
-        
+
         # Test Rust files only
         rs_results = grep.search("struct", path=self.tmpdir, glob="*.rs", output_mode="files_with_matches")
         assert isinstance(rs_results, list)
         for filepath in rs_results:
             assert filepath.endswith('.rs'), f"Non-Rust file found: {filepath}"
-            
+
         # Test JavaScript files only
         js_results = grep.search("function", path=self.tmpdir, glob="*.js", output_mode="files_with_matches")
         assert isinstance(js_results, list)
@@ -632,9 +634,10 @@ line7: after context"""
     def test_glob_pattern_exact_filenames(self):
         """Test glob patterns with exact filenames"""
         grep = pyripgrep.Grep()
-        
+
         # Search for specific filename
-        readme_results = grep.search("ripgrep-python", path=self.tmpdir, glob="README.md", output_mode="files_with_matches")
+        readme_results = grep.search("ripgrep-python", path=self.tmpdir, glob="README.md",
+                                     output_mode="files_with_matches")
         assert isinstance(readme_results, list)
         for filepath in readme_results:
             assert "README.md" in filepath, f"Wrong file found: {filepath}"
@@ -642,26 +645,26 @@ line7: after context"""
     def test_glob_pattern_wildcards(self):
         """Test glob patterns with wildcards"""
         grep = pyripgrep.Grep()
-        
+
         # Create additional test files with specific patterns
         wildcard_files = {
             "test_main.py": "def test_function(): pass",
-            "main_app.py": "def main(): pass", 
+            "main_app.py": "def main(): pass",
             "helper_utils.py": "def helper(): pass"
         }
-        
+
         for filename, content in wildcard_files.items():
             filepath = os.path.join(self.tmpdir, filename)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
-        
+
         # Test prefix wildcard
         main_results = grep.search("def", path=self.tmpdir, glob="main*.py", output_mode="files_with_matches")
         assert isinstance(main_results, list)
         for filepath in main_results:
             basename = os.path.basename(filepath)
             assert basename.startswith('main') and basename.endswith('.py'), f"Wrong pattern match: {basename}"
-            
+
         # Test suffix wildcard
         test_results = grep.search("def", path=self.tmpdir, glob="*_main.py", output_mode="files_with_matches")
         assert isinstance(test_results, list)
@@ -672,7 +675,7 @@ line7: after context"""
     def test_glob_pattern_question_mark(self):
         """Test glob patterns with single character wildcards"""
         grep = pyripgrep.Grep()
-        
+
         # Create files for single character testing
         single_char_files = {
             "file1.txt": "content 1",
@@ -681,16 +684,16 @@ line7: after context"""
             "files.txt": "content s",
             "filelong.txt": "content long"
         }
-        
+
         for filename, content in single_char_files.items():
             filepath = os.path.join(self.tmpdir, filename)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
-        
+
         # Test single character wildcard
         single_results = grep.search("content", path=self.tmpdir, glob="file?.txt", output_mode="files_with_matches")
         assert isinstance(single_results, list)
-        
+
         basenames = [os.path.basename(f) for f in single_results]
         # Should match file1.txt, file2.txt, file3.txt, files.txt but NOT filelong.txt
         expected_matches = ["file1.txt", "file2.txt", "file3.txt", "files.txt"]
@@ -701,31 +704,32 @@ line7: after context"""
     def test_glob_pattern_character_classes(self):
         """Test glob patterns with character classes"""
         grep = pyripgrep.Grep()
-        
+
         # Create files for character class testing
         char_class_files = {
-            "log1.txt": "log entry 1", 
+            "log1.txt": "log entry 1",
             "log2.txt": "log entry 2",
             "log3.txt": "log entry 3",
             "log4.txt": "log entry 4",
             "loga.txt": "log entry a"
         }
-        
+
         for filename, content in char_class_files.items():
             filepath = os.path.join(self.tmpdir, filename)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
-        
+
         # Test character class pattern
-        class_results = grep.search("log entry", path=self.tmpdir, glob="log[123].txt", output_mode="files_with_matches")
+        class_results = grep.search("log entry", path=self.tmpdir, glob="log[123].txt",
+                                    output_mode="files_with_matches")
         assert isinstance(class_results, list)
-        
+
         basenames = [os.path.basename(f) for f in class_results]
         # Should match log1.txt, log2.txt, log3.txt but not log4.txt or loga.txt
         expected_matches = ["log1.txt", "log2.txt", "log3.txt"]
         for expected in expected_matches:
             assert expected in basenames, f"Expected {expected} not found in {basenames}"
-        
+
         unexpected_matches = ["log4.txt", "loga.txt"]
         for unexpected in unexpected_matches:
             assert unexpected not in basenames, f"Unexpected {unexpected} found in {basenames}"
@@ -733,37 +737,38 @@ line7: after context"""
     def test_glob_pattern_with_directories(self):
         """Test glob patterns that include directory paths"""
         grep = pyripgrep.Grep()
-        
+
         # Test matching files in the subdirectory we already created
         nested_results = grep.search("helper", path=self.tmpdir, glob="src/*.py", output_mode="files_with_matches")
         assert isinstance(nested_results, list)
-        
+
         # All results should be in src/ directory and be .py files
         for filepath in nested_results:
-            assert os.path.basename(os.path.dirname(filepath)) == 'src' and filepath.endswith('.py'), f"Wrong directory match: {filepath}"
+            assert os.path.basename(os.path.dirname(filepath)) == 'src' and filepath.endswith(
+                '.py'), f"Wrong directory match: {filepath}"
 
     def test_glob_pattern_case_sensitivity(self):
         """Test case sensitivity in glob patterns"""
         grep = pyripgrep.Grep()
-        
+
         # Create files with different cases
         case_files = {
             "Test.PY": "# uppercase extension",
             "test.py": "# lowercase extension"
         }
-        
+
         for filename, content in case_files.items():
             filepath = os.path.join(self.tmpdir, filename)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
-        
+
         # Test uppercase pattern
         upper_results = grep.search("#", path=self.tmpdir, glob="*.PY", output_mode="files_with_matches")
         assert isinstance(upper_results, list)
         upper_basenames = [os.path.basename(f) for f in upper_results]
         assert "Test.PY" in upper_basenames, "Case-sensitive matching should find Test.PY"
         assert "test.py" not in upper_basenames, "Case-sensitive matching should not find test.py with *.PY"
-        
+
         # Test lowercase pattern
         lower_results = grep.search("#", path=self.tmpdir, glob="*.py", output_mode="files_with_matches")
         assert isinstance(lower_results, list)
@@ -774,7 +779,7 @@ line7: after context"""
     def test_glob_pattern_no_matches(self):
         """Test glob patterns that don't match any files"""
         grep = pyripgrep.Grep()
-        
+
         # Test pattern that shouldn't match anything
         no_match = grep.search("anything", path=self.tmpdir, glob="*.nonexistent", output_mode="files_with_matches")
         assert isinstance(no_match, list)
@@ -783,13 +788,13 @@ line7: after context"""
     def test_glob_pattern_with_all_output_modes(self):
         """Test that glob patterns work with all output modes"""
         grep = pyripgrep.Grep()
-        
+
         # Test with files_with_matches mode
         files = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="files_with_matches")
         assert isinstance(files, list)
         for filepath in files:
             assert filepath.endswith('.py'), f"Wrong file type in files mode: {filepath}"
-        
+
         # Test with content mode
         content = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="content")
         assert isinstance(content, list)
@@ -798,7 +803,7 @@ line7: after context"""
             if line == "--":
                 continue
             assert ".py:" in line, f"Wrong file type in content mode: {line}"
-        
+
         # Test with count mode
         counts = grep.search("def", path=self.tmpdir, glob="*.py", output_mode="count")
         assert isinstance(counts, dict)
@@ -808,7 +813,7 @@ line7: after context"""
     def test_glob_pattern_complex_names(self):
         """Test glob patterns with complex file names"""
         grep = pyripgrep.Grep()
-        
+
         # Create files with complex names
         complex_files = {
             "test.backup.py": "# backup file content",
@@ -816,18 +821,18 @@ line7: after context"""
             "config.local.json": '{"local": true}',
             "data.test.txt": "test data content"
         }
-        
+
         for filename, content in complex_files.items():
             filepath = os.path.join(self.tmpdir, filename)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
-        
+
         # Test complex extension patterns
         backup_results = grep.search("backup", path=self.tmpdir, glob="*.backup.py", output_mode="files_with_matches")
         assert isinstance(backup_results, list)
         assert len(backup_results) == 1, "Should find exactly one backup file"
         assert "test.backup.py" in backup_results[0], "Should find the backup Python file"
-        
+
         min_results = grep.search("minified", path=self.tmpdir, glob="*.min.js", output_mode="files_with_matches")
         assert isinstance(min_results, list)
         assert len(min_results) == 1, "Should find exactly one minified file"
@@ -836,34 +841,35 @@ line7: after context"""
     def test_glob_pattern_multiple_extensions_at_once(self):
         """Test glob patterns that match multiple file extensions in one pattern"""
         grep = pyripgrep.Grep()
-        
+
         # Create files with different extensions
         multi_files = {
             "script.py": "Python content here",
-            "script.js": "JavaScript content here", 
+            "script.js": "JavaScript content here",
             "script.rs": "Rust content here",
             "script.go": "Go content here",
             "data.json": "JSON content here",
             "readme.md": "Markdown content here",
             "other.txt": "Text content here"
         }
-        
+
         for filename, content in multi_files.items():
             filepath = os.path.join(self.tmpdir, filename)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
-        
+
         # Test brace expansion pattern {py,js,rs} - MUST work
-        brace_results = grep.search("content here", path=self.tmpdir, glob="*.{py,js,rs}", output_mode="files_with_matches")
+        brace_results = grep.search("content here", path=self.tmpdir, glob="*.{py,js,rs}",
+                                    output_mode="files_with_matches")
         assert isinstance(brace_results, list)
         assert len(brace_results) > 0, "Brace expansion *.{py,js,rs} must find matching files"
-        
+
         # Should find py, js, rs files
         basenames = [os.path.basename(f) for f in brace_results]
         expected_extensions = ["script.py", "script.js", "script.rs"]
         found_expected = [f for f in basenames if f in expected_extensions]
         assert len(found_expected) == 3, f"Should find all 3 expected files (py,js,rs), got: {basenames}"
-        
+
         # Should not find other extensions
         unexpected = ["script.go", "data.json", "readme.md", "other.txt"]
         found_unexpected = [f for f in basenames if f in unexpected]
@@ -903,16 +909,16 @@ line7: after context"""
 
         # Test multi-type with list - should find files that match ANY of the types
         multi_type_results = grep.search(".", path=self.tmpdir, type=["python", "javascript", "rust"],
-                                        output_mode="files_with_matches")
-        
+                                         output_mode="files_with_matches")
+
         # Get basenames for easier checking
         basenames = [os.path.basename(f) for f in multi_type_results]
-        
+
         # Should find files with .py, .js, and .rs extensions
         expected_extensions = ["main.py", "app.js", "lib.rs"]  # Fixed to match actual file names
         found_expected = [f for f in basenames if f in expected_extensions]
         assert len(found_expected) >= 3, f"Should find files with py, js, and rs extensions, got: {basenames}"
-        
+
         # Should not find files with other extensions
         unexpected = ["script.go", "data.json", "readme.md", "config.txt"]
         found_unexpected = [f for f in basenames if f in unexpected]
@@ -923,13 +929,13 @@ line7: after context"""
         grep = pyripgrep.Grep()
 
         # Test with official names
-        official_results = grep.search(".", path=self.tmpdir, type=["py", "js", "rust"], 
-                                     output_mode="files_with_matches")
-        
+        official_results = grep.search(".", path=self.tmpdir, type=["py", "js", "rust"],
+                                       output_mode="files_with_matches")
+
         # Test with mixed custom and official names
         mixed_results = grep.search(".", path=self.tmpdir, type=["python", "js", "rust"],
-                                  output_mode="files_with_matches")
-        
+                                    output_mode="files_with_matches")
+
         # Results should be the same
         assert set(official_results) == set(mixed_results), "Official and custom type names should yield same results"
 
@@ -939,15 +945,16 @@ line7: after context"""
 
         # Multi-type with glob - should find only Python files matching the glob
         results = grep.search(".", path=self.tmpdir, type=["python", "javascript"], glob="*.py",
-                            output_mode="files_with_matches")
-        
+                              output_mode="files_with_matches")
+
         basenames = [os.path.basename(f) for f in results]
-        
+
         # Should only find .py files (AND logic)
         assert all(f.endswith(".py") for f in basenames), f"Should only find .py files, got: {basenames}"
-        
+
         # Should not find .js files even though javascript is in type list
-        assert not any(f.endswith(".js") for f in basenames), f"Should not find .js files due to glob restriction: {basenames}"
+        assert not any(
+            f.endswith(".js") for f in basenames), f"Should not find .js files due to glob restriction: {basenames}"
 
     def test_multi_type_single_vs_list_equivalence(self):
         """Test that single type as string vs single type in list gives same results"""
@@ -955,10 +962,10 @@ line7: after context"""
 
         # Single type as string
         single_results = grep.search(".", path=self.tmpdir, type="python", output_mode="files_with_matches")
-        
+
         # Single type in list
         list_results = grep.search(".", path=self.tmpdir, type=["python"], output_mode="files_with_matches")
-        
+
         # Should be identical
         assert set(single_results) == set(list_results), "Single type string and list should give identical results"
 
@@ -969,11 +976,11 @@ line7: after context"""
         # Invalid type in list should raise error
         with pytest.raises(Exception):
             grep.search(".", path=self.tmpdir, type=["python", "invalid_type"])
-        
+
         # Empty list should work (no type filtering)
         empty_results = grep.search(".", path=self.tmpdir, type=[], output_mode="files_with_matches")
         assert len(empty_results) > 0, "Empty type list should find all files"
-        
+
         # Mixed valid and invalid types should fail
         with pytest.raises(Exception):
             grep.search(".", path=self.tmpdir, type=["py", "javascript", "nonexistent"])
@@ -981,7 +988,7 @@ line7: after context"""
     def test_context_merging_within_file(self):
         """Test that overlapping context blocks are properly merged within a single file"""
         grep = pyripgrep.Grep()
-        
+
         # Create a test file with closely spaced matches
         context_file = os.path.join(self.tmpdir, "context_merge_test.py")
         test_content = """# line 1
@@ -994,28 +1001,28 @@ def function_b():  # line 5 - MATCH
 def other_function():  # line 8
     pass  # line 9
 """
-        
+
         with open(context_file, 'w') as f:
             f.write(test_content)
-        
+
         # Search with C=2 (2 lines context before and after)
         results = grep.search("def function", path=context_file, output_mode="content", n=True, C=2)
-        
+
         # With C=2, the matches on lines 2 and 5 should have overlapping context
         # Line 2 context: lines 1,3,4 
         # Line 5 context: lines 3,4,6,7
         # These should be merged into one continuous block
-        
+
         content_str = '\n'.join(results)
-        
+
         # Should contain both matches and merged context
         assert "def function_a():" in content_str
         assert "def function_b():" in content_str
-        
+
         # Should not have duplicate context lines
         line_3_count = content_str.count('return "result"')
         assert line_3_count == 1, f"Line 3 should appear only once, found {line_3_count} times"
-        
+
         # Should not contain separators within merged context
         separator_count = content_str.count('--')
         assert separator_count == 0, f"Should not have separators in merged context, found {separator_count}"
@@ -1023,34 +1030,34 @@ def other_function():  # line 8
     def test_context_separation_between_files(self):
         """Test that context blocks from different files are separated properly"""
         grep = pyripgrep.Grep()
-        
+
         # Create two test files
-        file1 = os.path.join(self.tmpdir, "file1.py") 
+        file1 = os.path.join(self.tmpdir, "file1.py")
         file2 = os.path.join(self.tmpdir, "file2.py")
-        
+
         with open(file1, 'w') as f:
             f.write("""# File 1
 def target_function():  # MATCH
     return 1
 """)
-            
+
         with open(file2, 'w') as f:
             f.write("""# File 2  
 def target_function():  # MATCH
     return 2
 """)
-        
+
         # Search with context
         results = grep.search("target_function", path=self.tmpdir, output_mode="content", n=True, C=1)
-        
+
         content_str = '\n'.join(results)
-        
+
         # Should contain results from both files
         assert "file1.py" in content_str
         assert "file2.py" in content_str
         assert "return 1" in content_str
         assert "return 2" in content_str
-        
+
         # Should have separator between different files
         separator_count = content_str.count('--')
         assert separator_count >= 1, f"Should have at least one separator between files, found {separator_count}"
@@ -1058,7 +1065,7 @@ def target_function():  # MATCH
     def test_context_range_separation_within_file(self):
         """Test that non-overlapping context ranges within a file are separated"""
         grep = pyripgrep.Grep()
-        
+
         # Create a test file with widely spaced matches
         context_file = os.path.join(self.tmpdir, "range_separation_test.py")
         test_content = """# line 1
@@ -1077,23 +1084,23 @@ def second_match():  # line 12 - MATCH
     return "second"  # line 13
 # line 14
 """
-        
+
         with open(context_file, 'w') as f:
             f.write(test_content)
-        
+
         # Search with C=1 (1 line context)
         results = grep.search("_match", path=context_file, output_mode="content", n=True, C=1)
-        
+
         content_str = '\n'.join(results)
-        
+
         # Should contain both matches
         assert "first_match" in content_str
         assert "second_match" in content_str
-        
+
         # Should have separator between non-overlapping ranges
         separator_count = content_str.count('--')
         assert separator_count >= 1, f"Should have separator between distant matches, found {separator_count}"
-        
+
         # Should not contain the middle lines (5-11) that are not in context
         assert "line 6" not in content_str
         assert "line 10" not in content_str
@@ -1101,7 +1108,7 @@ def second_match():  # line 12 - MATCH
     def test_context_match_preference(self):
         """Test that when a line is both context and match, it's shown as match"""
         grep = pyripgrep.Grep()
-        
+
         # Create a test file where one match's context overlaps with another match
         context_file = os.path.join(self.tmpdir, "match_preference_test.py")
         test_content = """line 1
@@ -1110,22 +1117,22 @@ line 3
 another_error()   # line 4 - MATCH
 line 5
 """
-        
+
         with open(context_file, 'w') as f:
             f.write(test_content)
-        
+
         # Search for "error" with C=1 context
         results = grep.search("error", path=context_file, output_mode="content", n=True, C=1)
-        
+
         content_str = '\n'.join(results)
-        
+
         # Both lines should appear as matches (using : separator)
         error_function_matches = [line for line in results if "error_function" in line and ":2:" in line]
         another_error_matches = [line for line in results if "another_error" in line and ":4:" in line]
-        
+
         assert len(error_function_matches) == 1, "error_function should appear as match (with :)"
         assert len(another_error_matches) == 1, "another_error should appear as match (with :)"
-        
+
         # error_function should not appear as context (with -) for another_error
         error_function_context = [line for line in results if "error_function" in line and "-2:" in line]
         assert len(error_function_context) == 0, "error_function should not appear as context (with -)"
@@ -1133,7 +1140,7 @@ line 5
     def test_head_limit_with_context_and_separators(self):
         """Test that head_limit correctly limits total output lines including context and separators"""
         grep = pyripgrep.Grep()
-        
+
         # Create test files with multiple matches
         for i in range(1, 4):
             filepath = os.path.join(self.tmpdir, f"test{i}.py")
@@ -1142,19 +1149,19 @@ line 5
 def test_function_{i}():  # MATCH
     return {i}
 """)
-        
+
         # Search with head_limit=5, which should include context and separators
         results = grep.search("test_function", path=self.tmpdir, output_mode="content", n=True, C=1, head_limit=5)
-        
+
         # Should have exactly 5 or fewer output lines total
         assert len(results) <= 5, f"head_limit=5 should limit total output, got {len(results)} lines"
-        
+
         # Should include context and/or separators in the count
         content_str = '\n'.join(results)
-        
+
         # Should have some results but be truncated
         assert len(results) > 0, "Should have some results"
-        
+
         # Might have separators counted in the limit
         has_separators = "--" in content_str
         if has_separators:

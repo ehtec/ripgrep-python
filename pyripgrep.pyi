@@ -32,7 +32,7 @@ class Grep:
         C: Optional[int] = None,
         n: Optional[bool] = None,
         i: Optional[bool] = None,
-        type: Optional[str] = None,
+        type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
@@ -50,7 +50,7 @@ class Grep:
             C: Number of lines before and after each match (overrides A and B)
             n: Show line numbers (requires content mode)
             i: Case insensitive search
-            type: File type filter (e.g., "rust", "python", "javascript")
+            type: File type filter (e.g., "rust", "python", ["python", "javascript"])
             head_limit: Maximum number of results to return
             multiline: Enable multiline mode
             timeout: Timeout in seconds for the search operation
@@ -73,7 +73,7 @@ class Grep:
         C: Optional[int] = None,
         n: Optional[bool] = None,
         i: Optional[bool] = None,
-        type: Optional[str] = None,
+        type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
@@ -91,7 +91,7 @@ class Grep:
             C: Number of lines before and after each match (overrides A and B)
             n: Show line numbers in format "path:line_num:content"
             i: Case insensitive search
-            type: File type filter (e.g., "rust", "python", "javascript")
+            type: File type filter (e.g., "rust", "python", ["python", "javascript"])
             head_limit: Maximum number of results to return
             multiline: Enable multiline mode
             timeout: Timeout in seconds for the search operation
@@ -115,7 +115,7 @@ class Grep:
         C: Optional[int] = None,
         n: Optional[bool] = None,
         i: Optional[bool] = None,
-        type: Optional[str] = None,
+        type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
@@ -133,7 +133,7 @@ class Grep:
             C: Number of lines before and after each match (ignored in count mode)
             n: Show line numbers (ignored in count mode)
             i: Case insensitive search
-            type: File type filter (e.g., "rust", "python", "javascript")
+            type: File type filter (e.g., "rust", "python", ["python", "javascript"])
             head_limit: Maximum number of results to return
             multiline: Enable multiline mode
             timeout: Timeout in seconds for the search operation

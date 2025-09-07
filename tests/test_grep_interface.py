@@ -1006,6 +1006,190 @@ line7: after context"""
         found_unexpected = [f for f in basenames if f in unexpected]
         assert len(found_unexpected) == 0, f"Should not find files with other extensions: {found_unexpected}"
 
+    def test_nested_subdirectories_all_modes(self):
+        """Test extensive nested directory structure with all output modes"""
+        grep = pyripgrep.Grep()
+        
+        # Create a separate directory for this test to avoid interfering with other tests
+        nested_test_dir = os.path.join(self.tmpdir, "nested_test_isolation")
+        os.makedirs(nested_test_dir, exist_ok=True)
+        
+        # Create complex nested directory structure
+        nested_structure = {
+            "root_file.py": "def root_function():\n    print('ROOT_MARKER')\n    return 'root'",
+            "src/main.py": "def main():\n    print('SRC_MARKER')\n    return 'main'",
+            "src/utils/helper.py": "def helper():\n    print('UTILS_MARKER')\n    return 'helper'",
+            "src/utils/common.py": "def common():\n    print('COMMON_MARKER')\n    return 'common'",
+            "tests/unit/test_main.py": "def test_main():\n    print('TEST_MARKER')\n    assert True",
+            "tests/integration/test_api.py": "def test_api():\n    print('API_MARKER')\n    assert True",
+            "docs/examples/example.py": "def example():\n    print('EXAMPLE_MARKER')\n    return 'example'",
+            "lib/core/processor.py": "def processor():\n    print('PROCESSOR_MARKER')\n    return 'process'",
+            "lib/core/engine/parser.py": "def parser():\n    print('PARSER_MARKER')\n    return 'parse'",
+            "config/settings.py": "SETTINGS = {\n    'debug': True,  # DEBUG_MARKER\n}",
+            "scripts/deploy.py": "def deploy():\n    print('DEPLOY_MARKER')\n    return 'deployed'",
+            "vendor/third_party/module.py": "def module():\n    print('MODULE_MARKER')\n    return 'module'",
+            # Non-Python files for filtering tests
+            "README.md": "# Project\nThis project has MARKER everywhere",
+            "src/config.json": '{"marker": "JSON_MARKER"}',
+            "docs/guide.txt": "This guide contains MARKER text",
+            "lib/core/engine/data.xml": "<data>XML_MARKER</data>",
+        }
+        
+        # Create all directories and files
+        for filepath, content in nested_structure.items():
+            full_path = os.path.join(nested_test_dir, filepath)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        # Test 1: Files mode - should find all files
+        all_files = grep.search(output_mode="files", path=nested_test_dir)
+        assert isinstance(all_files, list)
+        assert len(all_files) >= 16, f"Should find at least 16 files, got {len(all_files)}"
+        
+        # Should include deeply nested files
+        nested_files = [f for f in all_files if "engine/parser.py" in f]
+        assert len(nested_files) == 1, f"Should find deeply nested parser.py, got {nested_files}"
+        
+        # Test 2: Files mode with type filter - Python files only
+        python_files = grep.search(output_mode="files", path=nested_test_dir, type="python")
+        assert isinstance(python_files, list)
+        assert len(python_files) == 12, f"Should find exactly 12 Python files, got {len(python_files)}"
+        
+        for py_file in python_files:
+            assert py_file.endswith('.py'), f"Non-Python file found: {py_file}"
+        
+        # Should include files from all nested levels
+        expected_py_files = [
+            "root_file.py", "main.py", "helper.py", "common.py", 
+            "test_main.py", "test_api.py", "example.py", "processor.py", 
+            "parser.py", "settings.py", "deploy.py", "module.py"
+        ]
+        found_basenames = [os.path.basename(f) for f in python_files]
+        for expected in expected_py_files:
+            assert expected in found_basenames, f"Expected {expected} not found in {found_basenames}"
+        
+        # Test 3: Files mode with glob pattern - only files in src/ directory
+        src_files = grep.search(output_mode="files", path=nested_test_dir, glob="src/**/*.py")
+        assert isinstance(src_files, list)
+        assert len(src_files) == 3, f"Should find exactly 3 files in src/, got {len(src_files)}"
+        
+        for src_file in src_files:
+            assert "src/" in src_file, f"File not in src/ directory: {src_file}"
+            assert src_file.endswith('.py'), f"Non-Python file found: {src_file}"
+        
+        # Test 4: Files mode with both glob and type (AND logic)
+        filtered_files = grep.search(output_mode="files", path=nested_test_dir, glob="lib/**/*.py", type="python")
+        assert isinstance(filtered_files, list)
+        assert len(filtered_files) == 2, f"Should find exactly 2 files in lib/, got {len(filtered_files)}"
+        
+        lib_basenames = [os.path.basename(f) for f in filtered_files]
+        assert "processor.py" in lib_basenames, "Should find processor.py"
+        assert "parser.py" in lib_basenames, "Should find parser.py"
+        
+        # Test 5: Files_with_matches mode - search for MARKER pattern
+        marker_files = grep.search("MARKER", path=nested_test_dir, output_mode="files_with_matches")
+        assert isinstance(marker_files, list)
+        assert len(marker_files) >= 12, f"Should find files with MARKER, got {len(marker_files)}"
+        
+        # Should include both Python and non-Python files
+        marker_basenames = [os.path.basename(f) for f in marker_files]
+        assert "README.md" in marker_basenames, "Should find README.md with MARKER"
+        assert "parser.py" in marker_basenames, "Should find parser.py with PARSER_MARKER"
+        
+        # Test 6: Files_with_matches with type filter - only Python files with MARKER
+        py_marker_files = grep.search("MARKER", path=nested_test_dir, output_mode="files_with_matches", type="python")
+        assert isinstance(py_marker_files, list)
+        assert len(py_marker_files) == 12, f"Should find 12 Python files with MARKER, got {len(py_marker_files)}"
+        
+        for py_file in py_marker_files:
+            assert py_file.endswith('.py'), f"Non-Python file found: {py_file}"
+        
+        # Should not include non-Python files
+        py_marker_basenames = [os.path.basename(f) for f in py_marker_files]
+        assert "README.md" not in py_marker_basenames, "Should not find README.md with type=python"
+        
+        # Test 7: Content mode - search for specific markers in nested files
+        content_results = grep.search("UTILS_MARKER", path=nested_test_dir, output_mode="content", n=True)
+        assert isinstance(content_results, list)
+        assert len(content_results) == 1, f"Should find exactly 1 line with UTILS_MARKER, got {len(content_results)}"
+        
+        content_line = content_results[0]
+        assert "utils/helper.py" in content_line, f"Should reference helper.py, got {content_line}"
+        assert "UTILS_MARKER" in content_line, f"Should contain UTILS_MARKER, got {content_line}"
+        assert ":2:" in content_line, f"Should show line number 2, got {content_line}"
+        
+        # Test 8: Content mode with glob filter - only files in tests/
+        test_content = grep.search("def test", path=nested_test_dir, output_mode="content", glob="tests/**/*.py", n=True)
+        assert isinstance(test_content, list)
+        assert len(test_content) == 2, f"Should find 2 test functions, got {len(test_content)}"
+        
+        for line in test_content:
+            assert "tests/" in line, f"Should be from tests/ directory: {line}"
+            assert "def test" in line, f"Should contain 'def test': {line}"
+        
+        # Test 9: Content mode with context - search for deeply nested function
+        parser_context = grep.search("def parser", path=self.tmpdir, output_mode="content", C=1, n=True)
+        assert isinstance(parser_context, list)
+        assert len(parser_context) >= 1, f"Should find parser function with context, got {len(parser_context)}"
+        
+        # Should include context lines
+        context_str = '\n'.join(parser_context)
+        assert "def parser" in context_str, "Should contain parser function"
+        assert "PARSER_MARKER" in context_str, "Should include context with PARSER_MARKER"
+        
+        # Test 10: Count mode - count markers across all nested files
+        marker_counts = grep.search("_MARKER", path=nested_test_dir, output_mode="count")
+        assert isinstance(marker_counts, dict)
+        assert len(marker_counts) >= 12, f"Should count markers in multiple files, got {len(marker_counts)}"
+        
+        # Should include deeply nested files
+        parser_files = [path for path in marker_counts.keys() if "parser.py" in path]
+        assert len(parser_files) == 1, f"Should find parser.py in counts, got {parser_files}"
+        assert marker_counts[parser_files[0]] == 1, f"Parser.py should have 1 marker, got {marker_counts[parser_files[0]]}"
+        
+        # Test 11: Count mode with type and glob filters
+        py_counts_in_lib = grep.search("_MARKER", path=nested_test_dir, output_mode="count", glob="lib/**/*.py", type="python")
+        assert isinstance(py_counts_in_lib, dict)
+        assert len(py_counts_in_lib) == 2, f"Should count markers in 2 lib files, got {len(py_counts_in_lib)}"
+        
+        # Should only include lib/ Python files
+        for filepath in py_counts_in_lib.keys():
+            assert "lib/" in filepath, f"Should be from lib/ directory: {filepath}"
+            assert filepath.endswith('.py'), f"Should be Python file: {filepath}"
+        
+        # Test 12: Head limit with nested structure
+        limited_files = grep.search(output_mode="files", path=nested_test_dir, type="python", head_limit=5)
+        assert isinstance(limited_files, list)
+        assert len(limited_files) == 5, f"Should limit to exactly 5 files, got {len(limited_files)}"
+        
+        # Test 13: Complex glob patterns with nested directories
+        core_files = grep.search(output_mode="files", path=nested_test_dir, glob="**/core/**/*.py")
+        assert isinstance(core_files, list)
+        assert len(core_files) == 2, f"Should find 2 files in core directories, got {len(core_files)}"
+        
+        core_basenames = [os.path.basename(f) for f in core_files]
+        assert "processor.py" in core_basenames, "Should find processor.py in core"
+        assert "parser.py" in core_basenames, "Should find parser.py in core/engine"
+        
+        # Test 14: Multi-level directory traversal with mixed file types
+        all_markers = grep.search("MARKER", path=nested_test_dir, output_mode="files_with_matches")
+        python_markers = grep.search("MARKER", path=nested_test_dir, output_mode="files_with_matches", type="python")
+        
+        assert len(all_markers) > len(python_markers), "All files should include more than just Python files"
+        assert all(f in all_markers for f in python_markers), "Python markers should be subset of all markers"
+        
+        # Test 15: Verify directory depth handling
+        deepest_files = grep.search("PARSER_MARKER", path=nested_test_dir, output_mode="files_with_matches")
+        assert len(deepest_files) == 1, "Should find the deeply nested parser file"
+        
+        deepest_path = deepest_files[0]
+        path_parts = deepest_path.split(os.sep)
+        assert "lib" in path_parts, "Should include lib in path"
+        assert "core" in path_parts, "Should include core in path"
+        assert "engine" in path_parts, "Should include engine in path"
+        assert "parser.py" in path_parts, "Should include parser.py in path"
+
     def test_multi_type_support_official_names(self):
         """Test multi-type support using official ripgrep type names"""
         grep = pyripgrep.Grep()

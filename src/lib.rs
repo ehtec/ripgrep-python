@@ -34,6 +34,7 @@ pub enum OutputMode {
     Content,
     FilesWithMatches,
     Count,
+    Files,
 }
 
 impl OutputMode {
@@ -42,6 +43,7 @@ impl OutputMode {
             "content" => Ok(OutputMode::Content),
             "files_with_matches" => Ok(OutputMode::FilesWithMatches),
             "count" => Ok(OutputMode::Count),
+            "files" => Ok(OutputMode::Files),
             _ => Err(PyValueError::new_err(format!("Invalid output mode: {}", s))),
         }
     }
@@ -124,6 +126,12 @@ impl Grep {
         timeout: Option<f64>,     // timeout in seconds
     ) -> PyResult<PyObject> {
         let output_mode = OutputMode::from_str(output_mode.unwrap_or("files_with_matches"))?;
+        
+        // Validate pattern requirement based on output mode
+        if pattern.is_none() && output_mode != OutputMode::Files {
+            return Err(PyValueError::new_err("Pattern is required for all output modes except 'files'"));
+        }
+        
         let path = path.unwrap_or(".");
         let case_insensitive = i.unwrap_or(false);
         let multiline = multiline.unwrap_or(false);
@@ -139,8 +147,12 @@ impl Grep {
         // Parse types outside allow_threads (can raise Python exceptions here)
         let parsed_types = Self::parse_types(r#type)?;
 
-        // Build matcher
-        let matcher = self.build_matcher(pattern, case_insensitive, multiline)?;
+        // Build matcher (only if pattern is provided)
+        let matcher = if let Some(pattern) = pattern {
+            Some(self.build_matcher(pattern, case_insensitive, multiline)?)
+        } else {
+            None
+        };
 
         // Compute deadline from timeout
         let deadline = deadline_from_secs(timeout);
@@ -151,9 +163,10 @@ impl Grep {
         // Search based on output mode (heavy part runs without the GIL)
         match output_mode {
             OutputMode::Content => {
+                let matcher = matcher.as_ref().unwrap(); // Safe because we validated above
                 let results = py.allow_threads(|| {
                     self.search_content_inner(
-                        &matcher,
+                        matcher,
                         walker,
                         type_matcher.as_ref(),
                         before_ctx,
@@ -164,16 +177,24 @@ impl Grep {
                 Ok(self.format_content_results(py, results, line_numbers, head_limit)?)
             }
             OutputMode::FilesWithMatches => {
+                let matcher = matcher.as_ref().unwrap(); // Safe because we validated above
                 let files = py.allow_threads(|| {
-                    self.search_files_inner(&matcher, walker, type_matcher.as_ref(), head_limit, deadline)
+                    self.search_files_inner(matcher, walker, type_matcher.as_ref(), head_limit, deadline)
                 }).map_err(to_pyerr)?;
                 Ok(files.into_py(py))
             }
             OutputMode::Count => {
+                let matcher = matcher.as_ref().unwrap(); // Safe because we validated above
                 let counts = py.allow_threads(|| {
-                    self.search_count_inner(&matcher, walker, type_matcher.as_ref(), head_limit, deadline)
+                    self.search_count_inner(matcher, walker, type_matcher.as_ref(), head_limit, deadline)
                 }).map_err(to_pyerr)?;
                 Ok(self.format_count_results(py, counts)?)
+            }
+            OutputMode::Files => {
+                let files = py.allow_threads(|| {
+                    self.search_files_no_match_inner(walker, type_matcher.as_ref(), head_limit, deadline)
+                }).map_err(to_pyerr)?;
+                Ok(files.into_py(py))
             }
         }
     }
@@ -351,6 +372,46 @@ impl Grep {
         }
 
         Ok(files.into_iter().collect())
+    }
+
+    /// List files that would be searched (no pattern matching) - like rg --files
+    fn search_files_no_match_inner(
+        &self,
+        walker: ignore::Walk,
+        type_matcher: Option<&ignore::types::Types>,
+        head_limit: Option<usize>,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<String>, RGErr> {
+        let mut files = Vec::new();
+
+        for entry in walker {
+            if timed_out(deadline) {
+                return Err(RGErr::Timeout);
+            }
+
+            if let Some(limit) = head_limit {
+                if files.len() >= limit {
+                    break;
+                }
+            }
+
+            let entry = entry.map_err(RGErr::Walk)?;
+
+            if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+                continue;
+            }
+
+            // Apply type filter manually for AND logic with glob
+            if let Some(type_matcher) = type_matcher {
+                if !type_matcher.matched(entry.path(), false).is_whitelist() {
+                    continue;
+                }
+            }
+
+            files.push(entry.path().to_string_lossy().to_string());
+        }
+
+        Ok(files)
     }
 
     /// Search and count matches per file (GIL-free inner implementation)

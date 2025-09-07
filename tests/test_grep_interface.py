@@ -440,6 +440,68 @@ line7: after context"""
         assert search_time < 5.0
         assert isinstance(results, list)
 
+    def test_files_output_mode(self):
+        """Test 'files' output mode - list all files that would be searched"""
+        grep = pyripgrep.Grep()
+        
+        # Test 1: Basic files mode without pattern
+        all_files = grep.search(output_mode="files", path=self.tmpdir)
+        assert isinstance(all_files, list)
+        assert len(all_files) > 0, "Should find some files"
+        
+        # Should include all test files we created
+        file_basenames = [os.path.basename(f) for f in all_files]
+        expected_files = ["main.py", "app.js", "lib.rs", "README.md"]  # Only files we actually create
+        for expected_file in expected_files:
+            assert expected_file in file_basenames, f"Expected file {expected_file} not found in {file_basenames}"
+        
+        # Test 2: Files mode with glob filter
+        py_files = grep.search(output_mode="files", path=self.tmpdir, glob="*.py")
+        assert isinstance(py_files, list)
+        for f in py_files:
+            assert f.endswith(".py"), f"Non-Python file found: {f}"
+        
+        js_files = grep.search(output_mode="files", path=self.tmpdir, glob="*.js")
+        assert isinstance(js_files, list)
+        for f in js_files:
+            assert f.endswith(".js"), f"Non-JavaScript file found: {f}"
+        
+        # Test 3: Files mode with type filter
+        python_files = grep.search(output_mode="files", path=self.tmpdir, type="python")
+        assert isinstance(python_files, list)
+        for f in python_files:
+            assert f.endswith(".py"), f"Non-Python file found: {f}"
+        
+        # Test 4: Files mode with both glob and type (AND logic)
+        filtered_files = grep.search(output_mode="files", path=self.tmpdir, glob="*.py", type="python")
+        assert isinstance(filtered_files, list)
+        for f in filtered_files:
+            assert f.endswith(".py"), f"Non-Python file found: {f}"
+        
+        # Should be the same as just type filter since glob and type both match .py files
+        assert sorted(python_files) == sorted(filtered_files)
+        
+        # Test 5: Files mode with head_limit
+        limited_files = grep.search(output_mode="files", path=self.tmpdir, head_limit=3)
+        assert isinstance(limited_files, list)
+        assert len(limited_files) <= 3, f"Expected max 3 files, got {len(limited_files)}"
+        
+        # Test 6: Error when pattern is provided but not needed
+        # Pattern should be ignored in files mode (just like rg --files ignores pattern)
+        files_with_pattern = grep.search("unused_pattern", output_mode="files", path=self.tmpdir)
+        files_without_pattern = grep.search(output_mode="files", path=self.tmpdir)
+        assert sorted(files_with_pattern) == sorted(files_without_pattern), "Pattern should be ignored in files mode"
+        
+        # Test 7: Error validation - pattern required for other modes
+        with pytest.raises(ValueError, match="Pattern is required"):
+            grep.search(output_mode="content", path=self.tmpdir)  # No pattern
+            
+        with pytest.raises(ValueError, match="Pattern is required"):
+            grep.search(output_mode="files_with_matches", path=self.tmpdir)  # No pattern
+            
+        with pytest.raises(ValueError, match="Pattern is required"):
+            grep.search(output_mode="count", path=self.tmpdir)  # No pattern
+
     def test_timeout_functionality(self, request):
         """Test timeout functionality with performance comparison to native ripgrep"""
         # Verify ripgrep is available - FAIL if not present

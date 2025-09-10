@@ -342,6 +342,45 @@ line7: after context"""
         assert len(limited_counts) <= 2
         assert len(limited_counts) <= len(all_counts)
 
+    def test_truncation_warning_parameter(self):
+        """Test truncation_warning parameter to add warning when content is truncated"""
+        grep = pyripgrep.Grep()
+
+        # Get all results first to know if we have enough to cause truncation
+        all_results = grep.search("e", path=self.tmpdir, output_mode="content")
+        
+        # Only test if we have more than 3 results
+        if len(all_results) > 3:
+            # Test with truncation_warning enabled - should include warning
+            limited_with_warning = grep.search(
+                "e", path=self.tmpdir, output_mode="content", head_limit=3, truncation_warning=True
+            )
+            
+            # Test with truncation_warning disabled - should not include warning
+            limited_without_warning = grep.search(
+                "e", path=self.tmpdir, output_mode="content", head_limit=3, truncation_warning=False
+            )
+            
+            # With warning should have exactly one more line (the warning)
+            assert len(limited_with_warning) == len(limited_without_warning) + 1
+            assert limited_with_warning[-1] == "[Content truncated]"
+            
+            # Without warning should not contain the truncation message
+            assert "[Content truncated]" not in limited_without_warning
+            
+            # Both should have the same content except for the warning
+            assert limited_with_warning[:-1] == limited_without_warning
+        
+        # Test when no truncation occurs (head_limit >= all results)
+        no_truncation = grep.search(
+            "e", path=self.tmpdir, output_mode="content", 
+            head_limit=len(all_results) + 10, truncation_warning=True
+        )
+        
+        # Should not include warning when no truncation occurs
+        assert "[Content truncated]" not in no_truncation
+        assert len(no_truncation) == len(all_results)
+
     def test_multiline_parameter(self):
         """Test multiline parameter for cross-line pattern matching"""
         grep = pyripgrep.Grep()

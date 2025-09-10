@@ -105,6 +105,7 @@ impl Grep {
         i = None,      // -i flag: case insensitive
         r#type = None, // type parameter: file type filter
         head_limit = None,
+        truncation_warning = None, // add truncation warning
         multiline = None,
         timeout = None // timeout in seconds
     ))]
@@ -122,6 +123,7 @@ impl Grep {
         i: Option<bool>,          // -i: case insensitive
         r#type: Option<&PyAny>,   // type: file type filter (string or list)
         head_limit: Option<usize>,
+        truncation_warning: Option<bool>, // add truncation warning
         multiline: Option<bool>,
         timeout: Option<f64>,     // timeout in seconds
     ) -> PyResult<PyObject> {
@@ -136,6 +138,7 @@ impl Grep {
         let case_insensitive = i.unwrap_or(false);
         let multiline = multiline.unwrap_or(false);
         let line_numbers = n.unwrap_or(false);
+        let show_truncation_warning = truncation_warning.unwrap_or(false);
 
         // Handle context options - C overrides A and B
         let (before_ctx, after_ctx) = if let Some(c) = C {
@@ -174,7 +177,7 @@ impl Grep {
                         deadline,
                     )
                 }).map_err(to_pyerr)?;
-                Ok(self.format_content_results(py, results, line_numbers, head_limit)?)
+                Ok(self.format_content_results(py, results, line_numbers, head_limit, show_truncation_warning)?)
             }
             OutputMode::FilesWithMatches => {
                 let matcher = matcher.as_ref().unwrap(); // Safe because we validated above
@@ -639,6 +642,7 @@ impl Grep {
         results: Vec<ContentResult>,
         show_line_numbers: bool,
         head_limit: Option<usize>,
+        show_truncation_warning: bool,
     ) -> PyResult<PyObject> {
         if results.is_empty() {
             return Ok(Vec::<String>::new().into_py(py));
@@ -654,13 +658,15 @@ impl Grep {
 
         let mut py_results: Vec<String> = Vec::new();
         let mut first_file = true;
+        let mut truncated = false;
 
-        for (file_path, mut file_results) in file_groups {
+        'file_loop: for (file_path, mut file_results) in file_groups {
             // Add separator between different files (except first file)
             if !first_file && !py_results.is_empty() {
                 if let Some(limit) = head_limit {
                     if py_results.len() >= limit {
-                        break;
+                        truncated = true;
+                        break 'file_loop;
                     }
                 }
                 py_results.push("--".to_string());
@@ -743,11 +749,12 @@ impl Grep {
             finalize_range(current_start, current_end, current_lines, &mut merged_ranges);
 
             // Output merged ranges
-            for (i, (_start, _end, lines)) in merged_ranges.iter().enumerate() {
+            'range_loop: for (i, (_start, _end, lines)) in merged_ranges.iter().enumerate() {
                 if i > 0 {
                     if let Some(limit) = head_limit {
                         if py_results.len() >= limit {
-                            break;
+                            truncated = true;
+                            break 'file_loop;
                         }
                     }
                     py_results.push("--".to_string());
@@ -756,7 +763,8 @@ impl Grep {
                 for (line_num, content, is_match) in lines {
                     if let Some(limit) = head_limit {
                         if py_results.len() >= limit {
-                            break;
+                            truncated = true;
+                            break 'range_loop;
                         }
                     }
 
@@ -772,6 +780,11 @@ impl Grep {
                     py_results.push(formatted);
                 }
             }
+        }
+
+        // Add truncation warning if enabled and truncation occurred
+        if show_truncation_warning && truncated {
+            py_results.push("[Content truncated]".to_string());
         }
 
         Ok(py_results.into_py(py))

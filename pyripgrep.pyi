@@ -34,6 +34,7 @@ class Grep:
         i: Optional[bool] = None,
         type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
+        truncation_warning: Optional[bool] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
     ) -> List[str]:
@@ -52,6 +53,7 @@ class Grep:
             i: Case insensitive search
             type: File type filter (e.g., "rust", "python", ["python", "javascript"])
             head_limit: Maximum number of results to return
+            truncation_warning: Add "[Content truncated]" message if results exceed head_limit
             multiline: Enable multiline mode
             timeout: Timeout in seconds for the search operation
 
@@ -75,6 +77,7 @@ class Grep:
         i: Optional[bool] = None,
         type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
+        truncation_warning: Optional[bool] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
     ) -> List[str]:
@@ -93,6 +96,7 @@ class Grep:
             i: Case insensitive search
             type: File type filter (e.g., "rust", "python", ["python", "javascript"])
             head_limit: Maximum number of results to return
+            truncation_warning: Add "[Content truncated]" message if results exceed head_limit
             multiline: Enable multiline mode
             timeout: Timeout in seconds for the search operation
 
@@ -117,6 +121,7 @@ class Grep:
         i: Optional[bool] = None,
         type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
+        truncation_warning: Optional[bool] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
     ) -> Dict[str, int]:
@@ -135,6 +140,7 @@ class Grep:
             i: Case insensitive search
             type: File type filter (e.g., "rust", "python", ["python", "javascript"])
             head_limit: Maximum number of results to return
+            truncation_warning: Add "[Content truncated]" message if results exceed head_limit
             multiline: Enable multiline mode
             timeout: Timeout in seconds for the search operation
 
@@ -158,6 +164,7 @@ class Grep:
         i: Optional[bool] = None,
         type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
+        truncation_warning: Optional[bool] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
     ) -> List[str]:
@@ -176,6 +183,7 @@ class Grep:
             i: Case insensitive search (ignored in files mode)
             type: File type filter (e.g., "rust", "python", ["python", "javascript"])
             head_limit: Maximum number of results to return
+            truncation_warning: Add "[Content truncated]" message if results exceed head_limit
             multiline: Enable multiline mode (ignored in files mode)
             timeout: Timeout in seconds for the search operation
 

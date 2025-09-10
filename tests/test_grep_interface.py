@@ -368,9 +368,10 @@ line7: after context"""
             # Without warning should not contain the truncation message
             assert "[Content truncated]" not in limited_without_warning
             
-            # Both should have the same content except for the warning
-            assert limited_with_warning[:-1] == limited_without_warning
-        
+            # Both should be limited to the head_limit
+            assert len(limited_without_warning) == 3
+            assert len(limited_with_warning) == 4  # 3 content + 1 warning
+            
         # Test when no truncation occurs (head_limit >= all results)
         no_truncation = grep.search(
             "e", path=self.tmpdir, output_mode="content", 

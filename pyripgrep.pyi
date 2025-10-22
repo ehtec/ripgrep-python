@@ -35,6 +35,7 @@ class Grep:
         type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
         truncation_warning: Optional[bool] = None,
+        compact_paths: Optional[bool] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
     ) -> List[str]:
@@ -54,6 +55,7 @@ class Grep:
             type: File type filter (e.g., "rust", "python", ["python", "javascript"])
             head_limit: Maximum number of results to return
             truncation_warning: Add "[Content truncated]" message if results exceed head_limit
+            compact_paths: Show filepath only once per content block (requires n=True and output_mode="content")
             multiline: Enable multiline mode
             timeout: Timeout in seconds for the search operation
 
@@ -78,6 +80,7 @@ class Grep:
         type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
         truncation_warning: Optional[bool] = None,
+        compact_paths: Optional[bool] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
     ) -> List[str]:
@@ -97,12 +100,14 @@ class Grep:
             type: File type filter (e.g., "rust", "python", ["python", "javascript"])
             head_limit: Maximum number of results to return
             truncation_warning: Add "[Content truncated]" message if results exceed head_limit
+            compact_paths: Show filepath only once per content block (requires n=True). Format: first line "path:line_num:content", subsequent lines ":line_num:content" or "-line_num:content"
             multiline: Enable multiline mode
             timeout: Timeout in seconds for the search operation
 
         Returns:
             List of matching lines, optionally with line numbers and context.
             Format: "path:content" or "path:line_num:content" if n=True
+            With compact_paths=True: "path:line_num:content" for first line, ":line_num:content" or "-line_num:content" for subsequent lines
         """
         ...
 
@@ -122,6 +127,7 @@ class Grep:
         type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
         truncation_warning: Optional[bool] = None,
+        compact_paths: Optional[bool] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
     ) -> Dict[str, int]:
@@ -165,6 +171,7 @@ class Grep:
         type: Optional[Union[str, List[str]]] = None,
         head_limit: Optional[int] = None,
         truncation_warning: Optional[bool] = None,
+        compact_paths: Optional[bool] = None,
         multiline: Optional[bool] = None,
         timeout: Optional[float] = None,
     ) -> List[str]:

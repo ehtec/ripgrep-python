@@ -399,6 +399,24 @@ line7: after context"""
         results = grep.search(r"struct.*\{", path=self.tmpdir, multiline=True, output_mode="content")
         assert isinstance(results, list)
 
+    def test_compact_paths_parameter(self):
+        """Test compact_paths parameter produces correct output format"""
+        grep = pyripgrep.Grep()
+
+        # Search "error" in main.py with context - should get 2 separate ranges
+        results = grep.search("error", path=os.path.join(self.tmpdir, "main.py"), output_mode="content", n=True, C=1, compact_paths=True)
+
+        # Expected: line 45 has "def error" and line 46 has "ERROR:"
+        # With C=1 context, we get lines 44-47
+        expected = [
+            f"{os.path.join(self.tmpdir, 'main.py')}:44:        self.logs = []",
+            "-45:",
+            ":46:        print(f\"ERROR: {msg}\")",
+            "-47:"
+        ]
+
+        assert results == expected
+
     def test_path_parameter(self):
         """Test path parameter for specifying search location"""
         grep = pyripgrep.Grep()

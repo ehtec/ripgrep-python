@@ -106,6 +106,7 @@ impl Grep {
         r#type = None, // type parameter: file type filter
         head_limit = None,
         truncation_warning = None, // add truncation warning
+        compact_paths = None, // show filepath only once per content block
         multiline = None,
         timeout = None // timeout in seconds
     ))]
@@ -124,6 +125,7 @@ impl Grep {
         r#type: Option<&PyAny>,   // type: file type filter (string or list)
         head_limit: Option<usize>,
         truncation_warning: Option<bool>, // add truncation warning
+        compact_paths: Option<bool>, // show filepath only once per content block
         multiline: Option<bool>,
         timeout: Option<f64>,     // timeout in seconds
     ) -> PyResult<PyObject> {
@@ -139,6 +141,7 @@ impl Grep {
         let multiline = multiline.unwrap_or(false);
         let line_numbers = n.unwrap_or(false);
         let show_truncation_warning = truncation_warning.unwrap_or(false);
+        let use_compact_paths = compact_paths.unwrap_or(false);
 
         // Handle context options - C overrides A and B
         let (before_ctx, after_ctx) = if let Some(c) = C {
@@ -177,7 +180,7 @@ impl Grep {
                         deadline,
                     )
                 }).map_err(to_pyerr)?;
-                Ok(self.format_content_results(py, results, line_numbers, head_limit, show_truncation_warning)?)
+                Ok(self.format_content_results(py, results, line_numbers, head_limit, show_truncation_warning, use_compact_paths)?)
             }
             OutputMode::FilesWithMatches => {
                 let matcher = matcher.as_ref().unwrap(); // Safe because we validated above
@@ -643,6 +646,7 @@ impl Grep {
         show_line_numbers: bool,
         head_limit: Option<usize>,
         show_truncation_warning: bool,
+        compact_paths: bool,
     ) -> PyResult<PyObject> {
         if results.is_empty() {
             return Ok(Vec::<String>::new().into_py(py));
@@ -760,6 +764,7 @@ impl Grep {
                     py_results.push("--".to_string());
                 }
 
+                let mut first_line_in_range = true;
                 for (line_num, content, is_match) in lines {
                     if let Some(limit) = head_limit {
                         if py_results.len() >= limit {
@@ -768,13 +773,32 @@ impl Grep {
                         }
                     }
 
-                    let formatted = if show_line_numbers {
+                    let formatted = if show_line_numbers && compact_paths {
+                        // Compact paths mode: only show filepath on first line of range
+                        if first_line_in_range {
+                            first_line_in_range = false;
+                            if *is_match {
+                                format!("{file_path}:{line_num}:{content}")
+                            } else {
+                                format!("{file_path}-{line_num}:{content}")
+                            }
+                        } else {
+                            // Subsequent lines: omit filepath
+                            if *is_match {
+                                format!(":{line_num}:{content}")
+                            } else {
+                                format!("-{line_num}:{content}")
+                            }
+                        }
+                    } else if show_line_numbers {
+                        // Regular mode with line numbers
                         if *is_match {
                             format!("{file_path}:{line_num}:{content}")
                         } else {
                             format!("{file_path}-{line_num}:{content}")
                         }
                     } else {
+                        // No line numbers
                         format!("{file_path}:{content}")
                     };
                     py_results.push(formatted);

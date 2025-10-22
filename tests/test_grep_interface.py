@@ -403,19 +403,14 @@ line7: after context"""
         """Test compact_paths parameter produces correct output format"""
         grep = pyripgrep.Grep()
 
-        # Search "error" in main.py with context - should get 2 separate ranges
+        # Search "error" (case-sensitive) in main.py with context
         results = grep.search("error", path=os.path.join(self.tmpdir, "main.py"), output_mode="content", n=True, C=1, compact_paths=True)
 
-        # Expected: line 45 has "def error" and line 46 has "ERROR:"
-        # With C=1 context, we get lines 44-47
-        expected = [
-            f"{os.path.join(self.tmpdir, 'main.py')}:44:        self.logs = []",
-            "-45:",
-            ":46:        print(f\"ERROR: {msg}\")",
-            "-47:"
-        ]
-
-        assert results == expected
+        # Verify exact output format
+        assert len(results) == 3
+        assert results[0] == f"{os.path.join(self.tmpdir, 'main.py')}-13:"
+        assert results[1] == ":14:    def error(self, msg):"
+        assert results[2] == "-15:        print(f\"ERROR: {msg}\")"
 
     def test_path_parameter(self):
         """Test path parameter for specifying search location"""

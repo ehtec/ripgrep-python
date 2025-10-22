@@ -403,7 +403,7 @@ line7: after context"""
         """Test compact_paths parameter produces correct output format"""
         grep = pyripgrep.Grep()
 
-        # Search "error" (case-sensitive) in main.py with context
+        # Test 1: Basic compact_paths with single range
         results = grep.search("error", path=os.path.join(self.tmpdir, "main.py"), output_mode="content", n=True, C=1, compact_paths=True)
 
         # Verify exact output format
@@ -411,6 +411,109 @@ line7: after context"""
         assert results[0] == f"{os.path.join(self.tmpdir, 'main.py')}-13:"
         assert results[1] == ":14:    def error(self, msg):"
         assert results[2] == "-15:        print(f\"ERROR: {msg}\")"
+
+        # Test 2: Multiple separate ranges with separators
+        test_file = os.path.join(self.tmpdir, "multi_range_test.py")
+        with open(test_file, 'w') as f:
+            f.write("""line 1
+def first():  # line 2
+    pass
+line 4
+line 5
+line 6
+line 7
+line 8
+def second():  # line 9
+    pass
+""")
+
+        results = grep.search("def", path=test_file, output_mode="content", n=True, C=1, compact_paths=True)
+
+        # Should have: context, match, context, separator, context, match, context
+        assert len(results) == 7
+        assert results[0] == f"{test_file}-1:line 1"
+        assert results[1] == ":2:def first():  # line 2"
+        assert results[2] == "-3:    pass"
+        assert results[3] == "--"
+        assert results[4] == f"{test_file}-8:line 8"
+        assert results[5] == ":9:def second():  # line 9"
+        assert results[6] == "-10:    pass"
+
+        # Test 3: compact_paths=False (regular format)
+        regular_results = grep.search("def", path=test_file, output_mode="content", n=True, C=1, compact_paths=False)
+
+        # All lines should have full path
+        for line in regular_results:
+            if line != "--":
+                assert test_file in line
+
+        # Test 4: compact_paths without line numbers (should be ignored)
+        no_line_nums = grep.search("def", path=test_file, output_mode="content", n=False, compact_paths=True)
+
+        # All lines should still have full path when n=False
+        for line in no_line_nums:
+            if line != "--":
+                assert test_file in line
+
+        # Test 5: Multiple files - each file's first line should have path
+        results_multi = grep.search("error", path=self.tmpdir, output_mode="content", n=True, C=1, compact_paths=True, type="python")
+
+        # Track when we see a new file (after separator or at start)
+        expecting_new_file = True
+        for line in results_multi:
+            if line == "--":
+                expecting_new_file = True
+                continue
+
+            if expecting_new_file:
+                # First line after separator or at start should have full path
+                assert "/" in line or "\\" in line, f"Expected full path in first line: {line}"
+                expecting_new_file = False
+            else:
+                # Subsequent lines should start with : or -
+                assert line[0] in [":", "-"], f"Expected compact format: {line}"
+
+        # Test 6: Match and context lines in same range
+        test_file2 = os.path.join(self.tmpdir, "match_context_test.py")
+        with open(test_file2, 'w') as f:
+            f.write("""line 1
+match_line  # line 2
+context_line  # line 3
+match_line  # line 4
+context_line  # line 5
+""")
+
+        results = grep.search("match", path=test_file2, output_mode="content", n=True, C=1, compact_paths=True)
+
+        # Should merge into one range since matches are close
+        assert len(results) == 5
+        assert results[0] == f"{test_file2}-1:line 1"
+        assert results[1] == ":2:match_line  # line 2"
+        assert results[2] == "-3:context_line  # line 3"
+        assert results[3] == ":4:match_line  # line 4"
+        assert results[4] == "-5:context_line  # line 5"
+
+        # Test 7: Verify compact_paths works with different context options (A, B, C)
+        test_file3 = os.path.join(self.tmpdir, "context_options_test.py")
+        with open(test_file3, 'w') as f:
+            f.write("""before1
+before2
+match_here
+after1
+after2
+""")
+
+        # Test with A (after context only)
+        results_a = grep.search("match_here", path=test_file3, output_mode="content", n=True, A=2, compact_paths=True)
+        assert results_a[0] == f"{test_file3}:3:match_here"
+        assert results_a[1] == "-4:after1"
+        assert results_a[2] == "-5:after2"
+
+        # Test with B (before context only)
+        results_b = grep.search("match_here", path=test_file3, output_mode="content", n=True, B=2, compact_paths=True)
+        assert results_b[0] == f"{test_file3}-1:before1"
+        assert results_b[1] == "-2:before2"
+        assert results_b[2] == ":3:match_here"
 
     def test_path_parameter(self):
         """Test path parameter for specifying search location"""

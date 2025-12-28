@@ -208,67 +208,45 @@ impl Grep {
 
 impl Grep {
     /// Create mapping from custom type names to official ripgrep type names
+    /// Only includes custom aliases - official type names are passed through directly
     fn create_type_mapping() -> HashMap<&'static str, &'static str> {
         let mut map = HashMap::new();
-        
-        // Map custom names to official ripgrep type names
+
+        // Map custom/alternative names to official ripgrep type names
         map.insert("python", "py");
         map.insert("javascript", "js");
-        map.insert("rust", "rust");  // already matches
         map.insert("typescript", "ts");
         map.insert("markdown", "md");
         map.insert("c++", "cpp");
         map.insert("ruby", "rb");
-        
-        // Official names map to themselves
-        map.insert("py", "py");
-        map.insert("js", "js");  
-        map.insert("ts", "ts");
         map.insert("rs", "rust");  // rs -> rust for ripgrep
-        map.insert("cpp", "cpp");
-        map.insert("c", "c");
-        map.insert("go", "go");
-        map.insert("java", "java");
-        map.insert("php", "php");
-        map.insert("rb", "rb");
-        map.insert("md", "md");
-        map.insert("txt", "txt");
-        map.insert("json", "json");
-        map.insert("xml", "xml");
-        map.insert("yaml", "yaml");
         map.insert("yml", "yaml");  // yml -> yaml for ripgrep
-        map.insert("toml", "toml");
-        
+
         map
     }
     
     /// Parse type parameter from Python (string or list) into official ripgrep type names
+    /// If a type is in the custom mapping, use the mapped value; otherwise pass through directly
     fn parse_types(type_param: Option<&PyAny>) -> PyResult<Vec<String>> {
         let type_mapping = Self::create_type_mapping();
         let mut result_types = Vec::new();
-        
+
         if let Some(param) = type_param {
             if let Ok(type_str) = param.extract::<&str>() {
-                // Single string type
-                if let Some(&official_name) = type_mapping.get(type_str) {
-                    result_types.push(official_name.to_string());
-                } else {
-                    return Err(PyValueError::new_err(format!("Unknown file type: {}", type_str)));
-                }
+                // Single string type - use mapping if available, otherwise pass through
+                let type_name = type_mapping.get(type_str).unwrap_or(&type_str);
+                result_types.push(type_name.to_string());
             } else if let Ok(type_list) = param.extract::<Vec<&str>>() {
-                // List of types
+                // List of types - use mapping if available, otherwise pass through
                 for type_str in type_list {
-                    if let Some(&official_name) = type_mapping.get(type_str) {
-                        result_types.push(official_name.to_string());
-                    } else {
-                        return Err(PyValueError::new_err(format!("Unknown file type: {}", type_str)));
-                    }
+                    let type_name = type_mapping.get(type_str).unwrap_or(&type_str);
+                    result_types.push(type_name.to_string());
                 }
             } else {
                 return Err(PyValueError::new_err("Type parameter must be a string or list of strings"));
             }
         }
-        
+
         Ok(result_types)
     }
 

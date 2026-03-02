@@ -184,9 +184,12 @@ impl Grep {
             }
             OutputMode::FilesWithMatches => {
                 let matcher = matcher.as_ref().unwrap(); // Safe because we validated above
-                let files = py.allow_threads(|| {
+                let (mut files, truncated) = py.allow_threads(|| {
                     self.search_files_inner(matcher, walker, type_matcher.as_ref(), head_limit, deadline)
                 }).map_err(to_pyerr)?;
+                if show_truncation_warning && truncated {
+                    files.push("[Content truncated]".to_string());
+                }
                 Ok(files.into_py(py))
             }
             OutputMode::Count => {
@@ -197,9 +200,12 @@ impl Grep {
                 Ok(self.format_count_results(py, counts)?)
             }
             OutputMode::Files => {
-                let files = py.allow_threads(|| {
+                let (mut files, truncated) = py.allow_threads(|| {
                     self.search_files_no_match_inner(walker, type_matcher.as_ref(), head_limit, deadline)
                 }).map_err(to_pyerr)?;
+                if show_truncation_warning && truncated {
+                    files.push("[Content truncated]".to_string());
+                }
                 Ok(files.into_py(py))
             }
         }
@@ -322,9 +328,10 @@ impl Grep {
         type_matcher: Option<&ignore::types::Types>,
         head_limit: Option<usize>,
         deadline: Option<Instant>,
-    ) -> Result<Vec<String>, RGErr> {
+    ) -> Result<(Vec<String>, bool), RGErr> {
         let mut files = HashSet::new();
         let mut searcher = Searcher::new(); // Create once, reuse for all files
+        let mut truncated = false;
 
         for entry in walker {
             if timed_out(deadline) {
@@ -333,6 +340,7 @@ impl Grep {
 
             if let Some(limit) = head_limit {
                 if files.len() >= limit {
+                    truncated = true;
                     break;
                 }
             }
@@ -355,7 +363,7 @@ impl Grep {
             }
         }
 
-        Ok(files.into_iter().collect())
+        Ok((files.into_iter().collect(), truncated))
     }
 
     /// List files that would be searched (no pattern matching) - like rg --files
@@ -365,8 +373,9 @@ impl Grep {
         type_matcher: Option<&ignore::types::Types>,
         head_limit: Option<usize>,
         deadline: Option<Instant>,
-    ) -> Result<Vec<String>, RGErr> {
+    ) -> Result<(Vec<String>, bool), RGErr> {
         let mut files = Vec::new();
+        let mut truncated = false;
 
         for entry in walker {
             if timed_out(deadline) {
@@ -375,6 +384,7 @@ impl Grep {
 
             if let Some(limit) = head_limit {
                 if files.len() >= limit {
+                    truncated = true;
                     break;
                 }
             }
@@ -395,7 +405,7 @@ impl Grep {
             files.push(entry.path().to_string_lossy().to_string());
         }
 
-        Ok(files)
+        Ok((files, truncated))
     }
 
     /// Search and count matches per file (GIL-free inner implementation)
